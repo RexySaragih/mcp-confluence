@@ -48,3 +48,39 @@ export interface PlanOutput {
   acceptanceCriteria?: string[];
 }
 
+// Confluence page creation/update types
+export interface CreatePageParams {
+  spaceId: string;
+  title: string;
+  body: string; // Confluence Storage Format (XHTML)
+  parentPageId?: string;
+  labels?: string[];
+}
+
+export interface UpdatePageParams {
+  title: string;
+  body: string; // Confluence Storage Format (XHTML)
+  labels?: string[];
+}
+
+export interface CreatePageResult {
+  id: string;
+  title: string;
+  url: string;
+  version: number;
+}
+
+// Design document validation types
+export interface DesignDocSection {
+  heading: string;
+  content: string;
+  required: boolean;
+}
+
+export interface ValidationResult {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+  processedContent: string;
+}
+

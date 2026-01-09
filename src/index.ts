@@ -7,6 +7,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } fr
 import { readJiraTicketTool, handleReadJiraTicket } from './tools/jira.js';
 import { readConfluencePageTool, handleReadConfluencePage } from './tools/confluence.js';
 import { breakdownToPlanTool, handleBreakdownToPlan } from './tools/planner.js';
+import { createOrUpdateConfluencePageTool, handleCreateOrUpdateConfluencePage } from './tools/confluence-writer.js';
 import { JiraClient } from './clients/jira-client.js';
 import { ConfluenceClient } from './clients/confluence-client.js';
 
@@ -42,7 +43,12 @@ function buildClients() {
 async function start() {
   try {
     const { jiraClient, confluenceClient } = buildClients();
-    const tools = [readJiraTicketTool, readConfluencePageTool, breakdownToPlanTool];
+    const tools = [
+      readJiraTicketTool,
+      readConfluencePageTool,
+      breakdownToPlanTool,
+      createOrUpdateConfluencePageTool,
+    ];
     const toolHandlers: Record<
       string,
       (args: unknown) => Promise<ToolResponse>
@@ -50,6 +56,7 @@ async function start() {
       read_jira_ticket: (args) => handleReadJiraTicket(jiraClient, args),
       read_confluence_page: (args) => handleReadConfluencePage(confluenceClient, args),
       breakdown_to_plan: handleBreakdownToPlan,
+      create_or_update_confluence_page: (args) => handleCreateOrUpdateConfluencePage(confluenceClient, args),
     };
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));

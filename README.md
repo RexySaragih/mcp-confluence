@@ -9,6 +9,7 @@ A TypeScript MCP server that enables Cursor to read Jira tickets and Confluence 
 | `read_jira_ticket` | Fetches Jira issue details (summary, status, assignee, subtasks, description) and returns markdown |
 | `read_confluence_page` | Fetches Confluence page content and returns markdown |
 | `breakdown_to_plan` | Transforms Jira/Confluence content into structured actionable tasks |
+| `create_or_update_confluence_page` | Creates or updates Confluence pages with Markdown content, renders Mermaid diagrams, and validates design documents |
 
 ## Prerequisites
 
@@ -135,6 +136,44 @@ Pass fetched content to generate a structured plan:
 content: "<content from Jira or Confluence>"
 format: "text" | "markdown"
 ```
+
+### create_or_update_confluence_page
+
+Creates or updates a Confluence page with Markdown content:
+
+```
+space_id: "YOUR_SPACE_ID" (required - e.g., "ENG" or numeric ID)
+title: "Design Doc: Feature X" (required)
+content: "# Markdown content..." (required)
+parent_page_id: "YOUR_PARENT_PAGE_ID" (optional)
+page_id: "YOUR_PAGE_ID" (optional - to update specific page)
+validate_design_doc: true (optional - enables design doc guardrails)
+```
+
+**Features:**
+- Converts Markdown to Confluence Storage Format (XHTML)
+- Renders Mermaid diagrams to SVG and attaches them to the page
+- Displays Mermaid code blocks and embedded SVG images on the page
+- Validates design documents with guardrails (section validation, diagram placeholders, etc.)
+
+**Mermaid Diagrams:**
+Include Mermaid diagrams in your markdown using code blocks. The tool will:
+1. Display the Mermaid code in a code block on the page
+2. Render the diagram to SVG using mermaid-cli
+3. Upload the SVG as an attachment to the page
+4. Embed the rendered image below the code block
+
+Example:
+
+````markdown
+```mermaid
+flowchart TD
+    A[Start] --> B[Process]
+    B --> C[End]
+```
+````
+
+For detailed prompt examples and usage patterns, see [PROMPT_EXAMPLES.md](./PROMPT_EXAMPLES.md).
 
 ## Scripts
 
