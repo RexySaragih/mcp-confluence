@@ -84,7 +84,9 @@ export async function renderMermaidDiagrams(
   diagrams: { id: string; code: string }[],
 ): Promise<Map<string, string>> {
   const results = await Promise.all(
-    diagrams.map(({ id, code }) => renderMermaidToSvg(id, code)),
+    diagrams.map(({ id, code }) =>
+      renderMermaidToSvg(id, sanitizeMermaidCode(code)),
+    ),
   );
 
   const svgMap = new Map<string, string>();
@@ -195,6 +197,53 @@ function cleanSvg(svg: string): string {
   cleaned = cleaned.trim();
 
   return cleaned;
+}
+
+/**
+ * Sanitizes Mermaid diagram code before rendering.
+ * - Normalizes line endings
+ * - Strips non-printable characters
+ * - Replaces "smart quotes" with normal quotes
+ * - Fixes edge labels with parentheses by wrapping them in quotes
+ */
+function sanitizeMermaidCode(code: string): string {
+  let sanitized = code;
+
+  // Normalize CRLF/CR to LF
+  sanitized = sanitized.replace(/\r\n?/g, '\n');
+
+  // Remove non-printable characters (except tab/newline)
+  sanitized = sanitized.replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '');
+
+  // Normalize smart quotes to plain quotes
+  sanitized = sanitized
+    .replace(/[""]/g, '"')
+    .replace(/['']/g, "'");
+
+  // Fix edge labels that contain parentheses by wrapping them in quotes
+  // Pattern: |label with (parens)| -> |"label with (parens)"|
+  // This prevents parsing errors when parentheses appear in edge labels
+  sanitized = sanitized.replace(
+    /\|([^|]*\([^|]*\)[^|]*)\|/g,
+    (match, labelContent) => {
+      // If the label content already has quotes, don't double-wrap
+      const trimmed = labelContent.trim();
+      if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+          (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+        return match;
+      }
+      // Wrap in quotes to prevent parsing errors
+      return `|"${labelContent}"|`;
+    },
+  );
+
+  // Trim trailing whitespace on each line
+  sanitized = sanitized
+    .split('\n')
+    .map((line) => line.replace(/\s+$/g, ''))
+    .join('\n');
+
+  return sanitized.trim();
 }
 
 /**
