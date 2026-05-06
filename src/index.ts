@@ -5,16 +5,17 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { readJiraTicketTool, handleReadJiraTicket } from './tools/jira.js';
-import { readConfluencePageTool, handleReadConfluencePage } from './tools/confluence.js';
+import { readConfluencePageTool, handleReadConfluencePage, readConfluencePageCommentsTool, handleReadConfluencePageComments } from './tools/confluence.js';
 import { breakdownToPlanTool, handleBreakdownToPlan } from './tools/planner.js';
 import { createOrUpdateConfluencePageTool, handleCreateOrUpdateConfluencePage } from './tools/confluence-writer.js';
+import { readConfluenceImageTool, handleReadConfluenceImage } from './tools/confluence-image.js';
 import { JiraClient } from './clients/jira-client.js';
 import { ConfluenceClient } from './clients/confluence-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.resolve(__dirname, '../.env') });
 
-type Content = { type: 'text'; text: string };
+type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
 type ToolResponse = { content: Content[] };
 
 const server = new Server(
@@ -46,8 +47,10 @@ async function start() {
     const tools = [
       readJiraTicketTool,
       readConfluencePageTool,
+      readConfluencePageCommentsTool,
       breakdownToPlanTool,
       createOrUpdateConfluencePageTool,
+      readConfluenceImageTool,
     ];
     const toolHandlers: Record<
       string,
@@ -55,8 +58,10 @@ async function start() {
     > = {
       read_jira_ticket: (args) => handleReadJiraTicket(jiraClient, args),
       read_confluence_page: (args) => handleReadConfluencePage(confluenceClient, args),
+      read_confluence_page_comments: (args) => handleReadConfluencePageComments(confluenceClient, args),
       breakdown_to_plan: handleBreakdownToPlan,
       create_or_update_confluence_page: (args) => handleCreateOrUpdateConfluencePage(confluenceClient, args),
+      read_confluence_image: (args) => handleReadConfluenceImage(confluenceClient, args),
     };
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));

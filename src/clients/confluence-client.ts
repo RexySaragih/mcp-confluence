@@ -18,6 +18,10 @@ export class ConfluenceClient {
     this.apiBase = `${this.baseUrl}/wiki/api/v2`;
   }
 
+  getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
   async fetchPage(pageId: string): Promise<ConfluencePage> {
     const response = await fetch(
       `${this.apiBase}/pages/${pageId}?body-format=storage&embedded-content-render=body`,
@@ -37,10 +41,10 @@ export class ConfluenceClient {
       labels: data?.labels?.results?.map((label: any) => label?.name),
       children: data?._links?.webui
         ? (data?.children?.results ?? []).map((child: any) => ({
-            id: child?.id,
-            title: child?.title,
-            url: `${data._links.base}${child?._links?.webui ?? ''}`,
-          }))
+          id: child?.id,
+          title: child?.title,
+          url: `${data._links.base}${child?._links?.webui ?? ''}`,
+        }))
         : undefined,
       raw: data,
     };
@@ -150,6 +154,48 @@ export class ConfluenceClient {
     };
   }
 
+  async fetchPageComments(pageId: string): Promise<{ id: string; author: string; created: string; body: string; replies: { id: string; author: string; created: string; body: string }[] }[]> {
+    const v1ApiBase = `${this.baseUrl}/wiki/rest/api/content`;
+    const allComments: any[] = await this.fetchAllPaged(
+      `${v1ApiBase}/${pageId}/child/comment?expand=body.view,version&limit=50`,
+    );
+
+    return Promise.all(
+      allComments.map(async (c: any) => {
+        const replies = await this.fetchAllPaged(
+          `${v1ApiBase}/${c.id}/child/comment?expand=body.view,version&limit=50`,
+        );
+        return {
+          id: c.id,
+          author: c.version?.by?.displayName ?? 'Unknown',
+          created: c.version?.when ?? '',
+          body: c.body?.view?.value ?? '',
+          replies: replies.map((r: any) => ({
+            id: r.id,
+            author: r.version?.by?.displayName ?? 'Unknown',
+            created: r.version?.when ?? '',
+            body: r.body?.view?.value ?? '',
+          })),
+        };
+      }),
+    );
+  }
+
+  private async fetchAllPaged(initialUrl: string): Promise<any[]> {
+    const results: any[] = [];
+    let url: string | null = initialUrl;
+    while (url) {
+      const response = await fetch(url, { headers: this.headers() });
+      await this.assertOk(response, `Failed to fetch ${url}`);
+      const data = (await response.json()) as any;
+      results.push(...(data?.results ?? []));
+      // Confluence v1 paginates via _links.next (relative path)
+      const next = data?._links?.next;
+      url = next ? `${this.baseUrl}/wiki${next}` : null;
+    }
+    return results;
+  }
+
   async uploadAttachment(
     pageId: string,
     buffer: Buffer,
@@ -160,10 +206,10 @@ export class ConfluenceClient {
     const v1ApiBase = `${this.baseUrl}/wiki/rest/api/content`;
 
     const boundary = `----FormBoundary${Date.now()}`;
-    
+
     // Build multipart form data
     const formDataParts: (string | Buffer)[] = [];
-    
+
     // Add file field
     formDataParts.push(`--${boundary}\r\n`);
     formDataParts.push(`Content-Disposition: form-data; name="file"; filename="${filename}"\r\n`);
@@ -175,7 +221,7 @@ export class ConfluenceClient {
 
     // Combine parts into a single buffer
     const bodyBuffer = Buffer.concat(
-      formDataParts.map(part => 
+      formDataParts.map(part =>
         typeof part === 'string' ? Buffer.from(part, 'utf8') : part
       )
     );
@@ -194,7 +240,7 @@ export class ConfluenceClient {
     );
 
     const responseText = await response.text();
-    
+
     if (!response.ok) {
       throw new Error(`Failed to upload attachment to page ${pageId}: ${response.status} ${response.statusText} - ${responseText}`);
     }
@@ -255,7 +301,7 @@ export class ConfluenceClient {
     if (!space?.id) {
       throw new Error(
         `Failed to resolve space "${spaceIdOrKey}" to a numeric ID. ` +
-          `Make sure the space key or ID is correct.`,
+        `Make sure the space key or ID is correct.`,
       );
     }
 
@@ -271,6 +317,44 @@ export class ConfluenceClient {
       Authorization: `Basic ${token}`,
       Accept: 'application/json',
       'Content-Type': 'application/json',
+    };
+  }
+
+  /**
+   * Downloads an attachment image from a Confluence page and returns it as base64.
+   * @param pageId - The page ID the attachment belongs to
+   * @param filename - The attachment filename
+   * @returns Base64-encoded image data and mime type
+   */
+  async downloadAttachment(
+    pageId: string,
+    filename: string,
+  ): Promise<{ base64: string; mimeType: string }> {
+    const url = `${this.baseUrl}/wiki/download/attachments/${pageId}/${encodeURIComponent(filename)}`;
+    const token = Buffer.from(
+      `${this.config.email}:${this.config.apiToken}`,
+      'utf8',
+    ).toString('base64');
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Basic ${token}`,
+        Accept: '*/*',
+      },
+      redirect: 'follow',
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to download attachment "${filename}" from page ${pageId}: ${response.status} ${response.statusText}`,
+      );
+    }
+
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return {
+      base64: buffer.toString('base64'),
+      mimeType: contentType,
     };
   }
 
