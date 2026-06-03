@@ -330,32 +330,87 @@ export class ConfluenceClient {
     pageId: string,
     filename: string,
   ): Promise<{ base64: string; mimeType: string }> {
-    const url = `${this.baseUrl}/wiki/download/attachments/${pageId}/${encodeURIComponent(filename)}`;
     const token = Buffer.from(
       `${this.config.email}:${this.config.apiToken}`,
       'utf8',
     ).toString('base64');
+    const authHeaders: Record<string, string> = {
+      Authorization: `Basic ${token}`,
+      Accept: '*/*',
+      'X-Atlassian-Token': 'no-check',
+    };
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Basic ${token}`,
-        Accept: '*/*',
-      },
-      redirect: 'follow',
+    // Step 1: Find the attachment via v1 REST API to get its content ID
+    const v1Url = `${this.baseUrl}/wiki/rest/api/content/${pageId}/child/attachment?filename=${encodeURIComponent(filename)}&limit=50`;
+    const v1Response = await fetch(v1Url, {
+      headers: { ...authHeaders, Accept: 'application/json' },
     });
 
-    if (!response.ok) {
+    if (!v1Response.ok) {
+      const body = await v1Response.text().catch(() => '');
       throw new Error(
-        `Failed to download attachment "${filename}" from page ${pageId}: ${response.status} ${response.statusText}`,
+        `Failed to find attachment "${filename}" on page ${pageId}: ${v1Response.status} ${v1Response.statusText}. Body: ${body.substring(0, 200)}`,
       );
     }
 
-    const contentType = response.headers.get('content-type') || 'image/png';
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return {
-      base64: buffer.toString('base64'),
-      mimeType: contentType,
-    };
+    const v1Data = (await v1Response.json()) as any;
+    const attachment = v1Data?.results?.[0];
+
+    if (!attachment) {
+      throw new Error(
+        `Attachment "${filename}" not found on page ${pageId}. Available: ${(v1Data?.results ?? []).map((a: any) => a?.title).join(', ') || 'none'}`,
+      );
+    }
+
+    const attachmentId = attachment.id;
+    if (!attachmentId) {
+      throw new Error(`Attachment "${filename}" found but has no ID.`);
+    }
+
+    // Step 2: Use the dedicated download endpoint which returns a 302 to a pre-signed CDN URL
+    // GET /wiki/rest/api/content/{pageId}/child/attachment/{attachmentId}/download
+    const downloadApiUrl = `${this.baseUrl}/wiki/rest/api/content/${pageId}/child/attachment/${attachmentId}/download`;
+
+    const downloadResponse = await fetch(downloadApiUrl, {
+      headers: authHeaders,
+      redirect: 'manual',
+    });
+
+    if (downloadResponse.status === 302 || downloadResponse.status === 301 || downloadResponse.status === 303) {
+      // Follow the redirect to the pre-signed CDN URL (no auth needed)
+      const cdnUrl = downloadResponse.headers.get('location');
+      if (!cdnUrl) {
+        throw new Error(`Download endpoint returned redirect but no Location header for "${filename}"`);
+      }
+
+      const cdnResponse = await fetch(cdnUrl, {
+        headers: { Accept: '*/*' },
+        redirect: 'follow',
+      });
+
+      if (!cdnResponse.ok) {
+        throw new Error(
+          `Failed to download from CDN for "${filename}": ${cdnResponse.status} ${cdnResponse.statusText}`,
+        );
+      }
+
+      const contentType = cdnResponse.headers.get('content-type') || 'image/png';
+      const buffer = Buffer.from(await cdnResponse.arrayBuffer());
+      return { base64: buffer.toString('base64'), mimeType: contentType };
+    }
+
+    // If no redirect, maybe the endpoint returned the binary directly
+    if (downloadResponse.ok) {
+      const contentType = downloadResponse.headers.get('content-type') || 'image/png';
+      const buffer = Buffer.from(await downloadResponse.arrayBuffer());
+      return { base64: buffer.toString('base64'), mimeType: contentType };
+    }
+
+    const responseBody = await downloadResponse.text().catch(() => '');
+    throw new Error(
+      `Failed to download attachment "${filename}" (attachmentId: ${attachmentId}) from page ${pageId}: ` +
+        `${downloadResponse.status} ${downloadResponse.statusText}. Body: ${responseBody.substring(0, 300)}`,
+    );
   }
 
   private async assertOk(response: Response, context: string) {
