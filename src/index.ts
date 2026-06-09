@@ -1,6 +1,4 @@
-import { config } from 'dotenv';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+#!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
@@ -11,9 +9,6 @@ import { createOrUpdateConfluencePageTool, handleCreateOrUpdateConfluencePage } 
 import { readConfluenceImageTool, handleReadConfluenceImage } from './tools/confluence-image.js';
 import { JiraClient } from './clients/jira-client.js';
 import { ConfluenceClient } from './clients/confluence-client.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-config({ path: path.resolve(__dirname, '../.env') });
 
 type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
 type ToolResponse = { content: Content[] };

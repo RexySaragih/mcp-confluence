@@ -1,22 +1,35 @@
 {
-  "name": "confluence-mcp-server",
-  "version": "1.0.0",
+  "name": "@rexymayderio/jira-confluence-mcp",
+  "version": "1.0.1",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "test:connections": "node --loader ts-node/esm src/scripts/test-connections.ts"
+  "bin": {
+    "jira-confluence-mcp": "dist/index.js"
   },
-  "keywords": [],
-  "author": "",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "jira",
+    "confluence",
+    "atlassian"
+  ],
+  "author": "rexymayderio",
   "license": "ISC",
-  "description": "",
+  "description": "MCP server for Jira and Confluence integration",
   "dependencies": {
     "@mermaid-js/mermaid-cli": "^11.4.2",
     "@modelcontextprotocol/sdk": "1.0.4",
-    "dotenv": "^16.6.1",
     "marked": "^15.0.6",
     "turndown": "^7.2.2",
     "zod": "^4.1.13"
