@@ -57,11 +57,10 @@ export interface JiraSearchResult {
 
 export interface JiraSearchPage {
   issues: JiraSearchResult[];
-  startAt: number;
   maxResults: number;
   total: number;
   hasMore: boolean;
-  nextStartAt: number | null;
+  nextPageToken: string | null;
 }
 
 export interface ConfluencePage {

@@ -85,18 +85,22 @@ export class JiraClient {
 
   async searchIssues(
     jql: string,
-    options: { maxResults: number; startAt?: number },
+    options: { maxResults: number; nextPageToken?: string },
   ): Promise<JiraSearchPage> {
-    const startAt = options.startAt ?? 0;
+    const body: Record<string, unknown> = {
+      jql,
+      maxResults: options.maxResults,
+      fields: SEARCH_FIELDS,
+    };
+
+    if (options.nextPageToken) {
+      body.nextPageToken = options.nextPageToken;
+    }
+
     const response = await fetch(`${this.apiBase}/search/jql`, {
       method: 'POST',
       headers: this.headers(),
-      body: JSON.stringify({
-        jql,
-        startAt,
-        maxResults: options.maxResults,
-        fields: SEARCH_FIELDS,
-      }),
+      body: JSON.stringify(body),
     });
 
     await this.assertOk(response, 'Failed to search Jira issues');
@@ -113,16 +117,14 @@ export class JiraClient {
       url: `${this.baseUrl}/browse/${issue.key}`,
     }));
 
-    const total = data?.total ?? issues.length;
-    const nextStartAt = startAt + issues.length;
+    const nextPageToken = data?.nextPageToken ?? null;
 
     return {
       issues,
-      startAt,
       maxResults: options.maxResults,
-      total,
-      hasMore: nextStartAt < total,
-      nextStartAt: nextStartAt < total ? nextStartAt : null,
+      total: data?.total ?? issues.length,
+      hasMore: Boolean(nextPageToken),
+      nextPageToken,
     };
   }
 

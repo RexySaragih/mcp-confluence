@@ -60,12 +60,12 @@ All three environment variables are required. Get your API token from [Atlassian
 ```json
 {
   "jql": "project = ENG ORDER BY updated DESC",
-  "start_at": 15,
+  "next_page_token": "<token from previous response>",
   "max_results": 15
 }
 ```
 
-When more results exist, the response includes a `start_at` value to pass on the next call.
+When more results exist, the response includes a `next_page_token` value to pass on the next call.
 
 ### search_confluence
 

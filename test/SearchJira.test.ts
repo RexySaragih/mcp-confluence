@@ -15,9 +15,11 @@ describe('Search Jira', () => {
   describe('when issues match the JQL query', () => {
     it('should return a compact list of matching tickets', async () => {
       mockFetch([
-        route('/search/jql', () =>
-          jsonResponse({
-            total: 1,
+        route('/search/jql', (_url, init) => {
+          const body = JSON.parse(init?.body as string);
+          assert.equal(body.jql, 'project = ENG');
+          assert.equal(body.startAt, undefined);
+          return jsonResponse({
             issues: [
               {
                 key: 'ENG-1',
@@ -31,14 +33,14 @@ describe('Search Jira', () => {
                 },
               },
             ],
-          }),
-        ),
+          });
+        }),
       ]);
 
       const client = new JiraClient(AUTH);
       const result = await handleSearchJira(client, { jql: 'project = ENG' });
 
-      assert.match(result.content[0].text, /Showing 1-1 of 1 issue\(s\)/);
+      assert.match(result.content[0].text, /Found 1 issue\(s\)/);
       assert.match(result.content[0].text, /ENG-1 \| Payment retry \| Open \| Alice/);
       assert.match(result.content[0].text, new RegExp(`${BASE_URL}/browse/ENG-1`));
     });
@@ -49,7 +51,6 @@ describe('Search Jira', () => {
       mockFetch([
         route('/search/jql', () =>
           jsonResponse({
-            total: 30,
             issues: Array.from({ length: 15 }, (_, i) => ({
               key: `ENG-${i + 1}`,
               fields: {
@@ -61,6 +62,7 @@ describe('Search Jira', () => {
                 updated: '2026-01-01T00:00:00.000Z',
               },
             })),
+            nextPageToken: 'token-page-2',
           }),
         ),
       ]);
@@ -68,19 +70,18 @@ describe('Search Jira', () => {
       const client = new JiraClient(AUTH);
       const result = await handleSearchJira(client, { jql: 'project = ENG', max_results: 15 });
 
-      assert.match(result.content[0].text, /Showing 1-15 of 30 issue\(s\)/);
-      assert.match(result.content[0].text, /start_at=15/);
+      assert.match(result.content[0].text, /Found 15 issue\(s\)/);
+      assert.match(result.content[0].text, /next_page_token="token-page-2"/);
     });
   });
 
   describe('when fetching a subsequent page', () => {
-    it('should return results starting at the requested offset', async () => {
+    it('should send the next page token to Jira', async () => {
       mockFetch([
-        route('/search/jql', (url, init) => {
+        route('/search/jql', (_url, init) => {
           const body = JSON.parse(init?.body as string);
-          assert.equal(body.startAt, 15);
+          assert.equal(body.nextPageToken, 'token-page-2');
           return jsonResponse({
-            total: 30,
             issues: [
               {
                 key: 'ENG-16',
@@ -101,11 +102,10 @@ describe('Search Jira', () => {
       const client = new JiraClient(AUTH);
       const result = await handleSearchJira(client, {
         jql: 'project = ENG',
-        start_at: 15,
+        next_page_token: 'token-page-2',
         max_results: 15,
       });
 
-      assert.match(result.content[0].text, /Showing 16-16 of 30 issue\(s\)/);
       assert.match(result.content[0].text, /ENG-16/);
     });
   });
@@ -113,7 +113,7 @@ describe('Search Jira', () => {
   describe('when no issues match', () => {
     it('should return a no-results message', async () => {
       mockFetch([
-        route('/search/jql', () => jsonResponse({ total: 0, issues: [] })),
+        route('/search/jql', () => jsonResponse({ issues: [] })),
       ]);
 
       const client = new JiraClient(AUTH);
