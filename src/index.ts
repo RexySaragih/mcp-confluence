@@ -3,10 +3,12 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { readJiraTicketTool, handleReadJiraTicket } from './tools/jira.js';
-import { readConfluencePageTool, handleReadConfluencePage, readConfluencePageCommentsTool, handleReadConfluencePageComments } from './tools/confluence.js';
-import { breakdownToPlanTool, handleBreakdownToPlan } from './tools/planner.js';
-import { createOrUpdateConfluencePageTool, handleCreateOrUpdateConfluencePage } from './tools/confluence-writer.js';
+import { readConfluencePageTool, handleReadConfluencePage } from './tools/confluence.js';
 import { readConfluenceImageTool, handleReadConfluenceImage } from './tools/confluence-image.js';
+import { searchJiraTool, handleSearchJira } from './tools/jira-search.js';
+import { searchConfluenceTool, handleSearchConfluence } from './tools/confluence-search.js';
+import { updateJiraIssueTool, handleUpdateJiraIssue } from './tools/jira-write.js';
+import { updateConfluencePageTool, handleUpdateConfluencePage } from './tools/confluence-write.js';
 import { JiraClient } from './clients/jira-client.js';
 import { ConfluenceClient } from './clients/confluence-client.js';
 
@@ -40,23 +42,25 @@ async function start() {
   try {
     const { jiraClient, confluenceClient } = buildClients();
     const tools = [
+      searchJiraTool,
+      searchConfluenceTool,
       readJiraTicketTool,
       readConfluencePageTool,
-      readConfluencePageCommentsTool,
-      breakdownToPlanTool,
-      createOrUpdateConfluencePageTool,
       readConfluenceImageTool,
+      updateJiraIssueTool,
+      updateConfluencePageTool,
     ];
     const toolHandlers: Record<
       string,
       (args: unknown) => Promise<ToolResponse>
     > = {
+      search_jira: (args) => handleSearchJira(jiraClient, args),
+      search_confluence: (args) => handleSearchConfluence(confluenceClient, args),
       read_jira_ticket: (args) => handleReadJiraTicket(jiraClient, args),
       read_confluence_page: (args) => handleReadConfluencePage(confluenceClient, args),
-      read_confluence_page_comments: (args) => handleReadConfluencePageComments(confluenceClient, args),
-      breakdown_to_plan: handleBreakdownToPlan,
-      create_or_update_confluence_page: (args) => handleCreateOrUpdateConfluencePage(confluenceClient, args),
       read_confluence_image: (args) => handleReadConfluenceImage(confluenceClient, args),
+      update_jira_issue: (args) => handleUpdateJiraIssue(jiraClient, args),
+      update_confluence_page: (args) => handleUpdateConfluencePage(confluenceClient, args),
     };
 
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
@@ -98,4 +102,3 @@ process.on('SIGINT', async () => {
   await server.close();
   process.exit(0);
 });
-

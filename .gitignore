@@ -3,11 +3,13 @@ node_modules/
 
 # Build output
 dist/
+test-dist/
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+.npmrc.publish
 
 # IDE
 .idea/

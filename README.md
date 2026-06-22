@@ -1,6 +1,8 @@
 # @rexymayderio/jira-confluence-mcp
 
-A TypeScript MCP server for reading Jira tickets, Confluence pages, and publishing content back to Confluence — with Mermaid diagram rendering and design doc validation.
+A TypeScript MCP server for reading and updating Jira tickets and Confluence pages.
+
+Source: [github.com/RexySaragih/mcp-confluence](https://github.com/RexySaragih/mcp-confluence)
 
 ## Quick Start
 
@@ -34,41 +36,76 @@ All three environment variables are required. Get your API token from [Atlassian
 
 ## Tools
 
-| Tool                               | Description                                                                                        |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `read_jira_ticket`                 | Fetches Jira issue details (summary, status, assignee, subtasks, description) and returns markdown |
-| `read_confluence_page`             | Fetches Confluence page content and returns markdown                                               |
-| `read_confluence_page_comments`    | Fetches all comments (footer/inline) from a Confluence page                                        |
-| `read_confluence_image`            | Downloads and returns an image attachment from a Confluence page as base64                         |
-| `breakdown_to_plan`                | Transforms Jira/Confluence content into structured actionable tasks                                |
-| `create_or_update_confluence_page` | Creates or updates Confluence pages with Markdown, renders Mermaid diagrams, validates design docs |
+| Tool | Description |
+| ---- | ----------- |
+| `search_jira` | Search Jira issues with JQL; returns compact results |
+| `search_confluence` | Search Confluence pages by text or CQL |
+| `read_jira_ticket` | Fetch ticket details; optional comments and linked issues |
+| `read_confluence_page` | Fetch page content as markdown; optional comments |
+| `read_confluence_image` | Download an image attachment as base64 |
+| `update_jira_issue` | Add a comment and/or transition issue status |
+| `update_confluence_page` | Replace or append markdown content on a page |
 
 ## Tool Usage
 
-### read_jira_ticket
-
-Accepts either a URL or issue key:
+### search_jira
 
 ```json
-{ "url": "https://yourcompany.atlassian.net/browse/PROJ-123" }
+{
+  "jql": "project = ENG AND text ~ \"payment retry\" ORDER BY updated DESC",
+  "max_results": 15
+}
 ```
+
+```json
+{
+  "jql": "project = ENG ORDER BY updated DESC",
+  "start_at": 15,
+  "max_results": 15
+}
+```
+
+When more results exist, the response includes a `start_at` value to pass on the next call.
+
+### search_confluence
+
+```json
+{
+  "query": "payment retry design",
+  "space_key": "ENG",
+  "max_results": 10
+}
+```
+
+Pass a full CQL query in `query` when you need advanced filters (e.g. `label = "design-doc" AND text ~ "auth"`).
+
+### read_jira_ticket
 
 ```json
 { "ticket_key": "PROJ-123" }
 ```
 
-### read_confluence_page
-
-Accepts either a URL or page ID:
-
 ```json
 {
-  "url": "https://yourcompany.atlassian.net/wiki/spaces/SPACE/pages/123456/Page+Title"
+  "url": "https://yourcompany.atlassian.net/browse/PROJ-123",
+  "include_comments": true,
+  "include_links": true
 }
 ```
 
+Returns type, priority, labels, reporter, parent/epic, and optionally comments and linked issues.
+
+### read_confluence_page
+
 ```json
 { "page_id": "123456" }
+```
+
+```json
+{
+  "url": "https://yourcompany.atlassian.net/wiki/spaces/SPACE/pages/123456/Page+Title",
+  "include_comments": true
+}
 ```
 
 **Confluence Macro Support:**
@@ -79,15 +116,7 @@ Accepts either a URL or page ID:
 - **Image attachments** — Full download URLs with captions
 - **Internal links** — Preserved as clickable links
 
-### read_confluence_page_comments
-
-```json
-{ "page_id": "123456" }
-```
-
 ### read_confluence_image
-
-Downloads and returns an image attachment as base64 for visual inspection (architecture diagrams, flowcharts, etc.).
 
 ```json
 {
@@ -99,59 +128,61 @@ Downloads and returns an image attachment as base64 for visual inspection (archi
 { "page_id": "123456", "filename": "image-20260415-222345.png" }
 ```
 
-### breakdown_to_plan
-
-```json
-{ "content": "<content from Jira or Confluence>", "format": "markdown" }
-```
-
-### create_or_update_confluence_page
+### update_jira_issue
 
 ```json
 {
-  "space_id": "ENG",
-  "title": "Design Doc: Feature X",
-  "content": "# Markdown content...",
-  "parent_page_id": "123456",
-  "page_id": "789012",
-  "validate_design_doc": true,
-  "labels": ["design-doc", "feature-x"]
+  "ticket_key": "PROJ-123",
+  "comment": "Implemented the retry logic and added tests."
 }
 ```
 
-**Features:**
-
-- Converts Markdown to Confluence Storage Format (XHTML)
-- Renders Mermaid diagrams to SVG and attaches them to the page
-- Validates design documents with guardrails (section validation, diagram placeholders, heading ordering)
-
-**Mermaid Diagrams:**
-
-Include Mermaid diagrams in your markdown using fenced code blocks. The tool will render them to SVG, upload as attachments, and embed inline.
-
-````markdown
-```mermaid
-flowchart TD
-    A[Start] --> B[Process]
-    B --> C[End]
+```json
+{
+  "ticket_key": "PROJ-123",
+  "transition": "In Progress"
+}
 ```
-````
+
+Provide at least one of `comment` or `transition`.
+
+### update_confluence_page
+
+```json
+{
+  "page_id": "123456",
+  "content": "# Updated Section\n\nNew content here.",
+  "mode": "replace"
+}
+```
+
+```json
+{
+  "page_id": "123456",
+  "content": "\n## Changelog\n\n- Added retry logic",
+  "mode": "append"
+}
+```
+
+`mode` defaults to `replace`. Does not create new pages.
 
 ## Development
 
 ```bash
-git clone <repo-url>
-cd confluence-mcp-server
+git clone https://github.com/RexySaragih/mcp-confluence.git
+cd mcp-confluence
 npm install
 npm run build
 npm start
 ```
 
-| Command         | Description                              |
-| --------------- | ---------------------------------------- |
+| Command | Description |
+| ------- | ----------- |
 | `npm run build` | Compile TypeScript to `dist/` + chmod +x |
-| `npm start`     | Run the compiled MCP server              |
-| `npm run dev`   | Watch mode (tsc --watch)                 |
+| `npm start` | Run the compiled MCP server |
+| `npm run dev` | Watch mode (tsc --watch) |
+| `npm test` | Compile and run unit tests (dev only; uses Node built-in test runner) |
+| `npm run test:watch` | Watch-compile tests |
 
 ## Requirements
 
@@ -162,4 +193,4 @@ npm start
 
 - Server uses stdio transport — no HTTP port is opened.
 - Content is converted from Atlassian storage format to markdown using [Turndown](https://github.com/mixmark-io/turndown) with custom Confluence macro handling.
-- For detailed prompt examples, see [PROMPT_EXAMPLES.md](./PROMPT_EXAMPLES.md).
+- Confluence page updates convert markdown to storage format using [marked](https://marked.js.org/).

@@ -12,14 +12,56 @@ export interface JiraSubtask {
   status?: JiraStatus;
 }
 
+export interface JiraIssueLink {
+  type: string;
+  direction: 'outward' | 'inward';
+  linkedKey: string;
+  linkedSummary?: string;
+  linkedStatus?: string;
+}
+
+export interface JiraComment {
+  id: string;
+  author: string;
+  created: string;
+  body: string;
+}
+
 export interface JiraIssue {
   key: string;
   summary?: string;
   description?: unknown;
   status?: JiraStatus;
   assignee?: JiraUser;
+  reporter?: JiraUser;
+  priority?: { name?: string };
+  issueType?: { name?: string };
+  labels?: string[];
+  parent?: { key: string; summary?: string };
+  issueLinks?: JiraIssueLink[];
   subtasks?: JiraSubtask[];
+  comments?: JiraComment[];
   raw?: Record<string, unknown>;
+}
+
+export interface JiraSearchResult {
+  key: string;
+  summary: string;
+  status: string;
+  assignee: string;
+  issueType: string;
+  priority: string;
+  updated: string;
+  url: string;
+}
+
+export interface JiraSearchPage {
+  issues: JiraSearchResult[];
+  startAt: number;
+  maxResults: number;
+  total: number;
+  hasMore: boolean;
+  nextStartAt: number | null;
 }
 
 export interface ConfluencePage {
@@ -36,51 +78,22 @@ export interface ConfluencePage {
   raw?: Record<string, unknown>;
 }
 
-export interface PlanSection {
+export interface ConfluenceSearchResult {
+  id: string;
   title: string;
-  items: string[];
-}
-
-export interface PlanOutput {
-  overview?: string;
-  requirements?: string[];
-  tasks?: string[];
-  acceptanceCriteria?: string[];
-}
-
-// Confluence page creation/update types
-export interface CreatePageParams {
-  spaceId: string;
-  title: string;
-  body: string; // Confluence Storage Format (XHTML)
-  parentPageId?: string;
-  labels?: string[];
+  spaceKey: string;
+  excerpt: string;
+  url: string;
 }
 
 export interface UpdatePageParams {
   title: string;
-  body: string; // Confluence Storage Format (XHTML)
-  labels?: string[];
+  body: string;
 }
 
-export interface CreatePageResult {
+export interface UpdatePageResult {
   id: string;
   title: string;
   url: string;
   version: number;
 }
-
-// Design document validation types
-export interface DesignDocSection {
-  heading: string;
-  content: string;
-  required: boolean;
-}
-
-export interface ValidationResult {
-  isValid: boolean;
-  errors: string[];
-  warnings: string[];
-  processedContent: string;
-}
-

@@ -1,6 +1,6 @@
 {
   "name": "@rexymayderio/jira-confluence-mcp",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "publishConfig": {
     "access": "public"
   },
@@ -16,7 +16,9 @@
     "build": "tsc && chmod +x dist/index.js",
     "prepublishOnly": "npm run build",
     "start": "node dist/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "tsc -p tsconfig.test.json && node --test test-dist/test/**/*.test.js",
+    "test:watch": "tsc -p tsconfig.test.json --watch"
   },
   "keywords": [
     "mcp",
@@ -27,8 +29,15 @@
   "author": "rexymayderio",
   "license": "ISC",
   "description": "MCP server for Jira and Confluence integration",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RexySaragih/mcp-confluence.git"
+  },
+  "homepage": "https://github.com/RexySaragih/mcp-confluence#readme",
+  "bugs": {
+    "url": "https://github.com/RexySaragih/mcp-confluence/issues"
+  },
   "dependencies": {
-    "@mermaid-js/mermaid-cli": "^11.4.2",
     "@modelcontextprotocol/sdk": "1.0.4",
     "marked": "^15.0.6",
     "turndown": "^7.2.2",

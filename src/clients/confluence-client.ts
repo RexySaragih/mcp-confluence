@@ -1,4 +1,9 @@
-import { ConfluencePage, CreatePageParams, UpdatePageParams, CreatePageResult } from '../types/index.js';
+import {
+  ConfluencePage,
+  ConfluenceSearchResult,
+  UpdatePageParams,
+  UpdatePageResult,
+} from '../types/index.js';
 
 export interface ConfluenceClientConfig {
   baseUrl: string;
@@ -50,47 +55,34 @@ export class ConfluenceClient {
     };
   }
 
-  async createPage(params: CreatePageParams): Promise<CreatePageResult> {
-    const resolvedSpaceId = await this.resolveSpaceId(params.spaceId);
+  async searchPages(
+    query: string,
+    options?: { spaceKey?: string; maxResults?: number },
+  ): Promise<ConfluenceSearchResult[]> {
+    const maxResults = options?.maxResults ?? 10;
+    const cql = buildCql(query, options?.spaceKey);
+    const v1ApiBase = `${this.baseUrl}/wiki/rest/api/content/search`;
 
-    const body: Record<string, unknown> = {
-      spaceId: resolvedSpaceId,
-      status: 'current',
-      title: params.title,
-      body: {
-        representation: 'storage',
-        value: params.body,
-      },
-    };
+    const response = await fetch(
+      `${v1ApiBase}?cql=${encodeURIComponent(cql)}&limit=${maxResults}&expand=space,body.view`,
+      { headers: this.headers() },
+    );
 
-    if (params.parentPageId) {
-      body.parentId = params.parentPageId;
-    }
-
-    const response = await fetch(`${this.apiBase}/pages`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(body),
-    });
-
-    await this.assertOk(response, 'Failed to create page');
+    await this.assertOk(response, 'Failed to search Confluence pages');
     const data = (await response.json()) as any;
 
-    const result: CreatePageResult = {
-      id: data.id,
-      title: data.title,
-      url: data._links?.base
-        ? `${data._links.base}${data._links.webui ?? ''}`
-        : `${this.baseUrl}/wiki${data._links?.webui ?? ''}`,
-      version: data.version?.number ?? 1,
-    };
-
-    // Labels are not supported - silently ignore
-    return result;
+    return (data?.results ?? []).map((page: any) => ({
+      id: page.id,
+      title: page.title ?? 'Untitled',
+      spaceKey: page.space?.key ?? page.space?.name ?? '',
+      excerpt: stripHtml(page.body?.view?.value ?? page.excerpt ?? '').slice(0, 200),
+      url: page._links?.webui
+        ? `${this.baseUrl}/wiki${page._links.webui}`
+        : `${this.baseUrl}/wiki/spaces/${page.space?.key}/pages/${page.id}`,
+    }));
   }
 
-  async updatePage(pageId: string, params: UpdatePageParams): Promise<CreatePageResult> {
-    // First fetch current version
+  async updatePage(pageId: string, params: UpdatePageParams): Promise<UpdatePageResult> {
     const current = await this.fetchPage(pageId);
     const currentVersion = current.raw?.version as { number?: number } | undefined;
 
@@ -116,41 +108,13 @@ export class ConfluenceClient {
     await this.assertOk(response, `Failed to update page ${pageId}`);
     const data = (await response.json()) as any;
 
-    const result: CreatePageResult = {
+    return {
       id: data.id,
       title: data.title,
       url: data._links?.base
         ? `${data._links.base}${data._links.webui ?? ''}`
         : `${this.baseUrl}/wiki${data._links?.webui ?? ''}`,
       version: data.version?.number ?? 1,
-    };
-
-    return result;
-  }
-
-  async findPageByTitle(spaceId: string, title: string): Promise<ConfluencePage | null> {
-    const resolvedSpaceId = await this.resolveSpaceId(spaceId);
-    const encodedTitle = encodeURIComponent(title);
-    const response = await fetch(
-      `${this.apiBase}/spaces/${resolvedSpaceId}/pages?title=${encodedTitle}&body-format=storage`,
-      { headers: this.headers() },
-    );
-
-    await this.assertOk(response, `Failed to search for page "${title}"`);
-    const data = (await response.json()) as any;
-
-    const pages = data?.results ?? [];
-    if (pages.length === 0) return null;
-
-    const page = pages[0];
-    return {
-      id: page.id,
-      title: page.title,
-      url: page._links?.webui
-        ? `${this.baseUrl}/wiki${page._links.webui}`
-        : undefined,
-      storage: page.body?.storage?.value,
-      raw: page,
     };
   }
 
@@ -189,123 +153,10 @@ export class ConfluenceClient {
       await this.assertOk(response, `Failed to fetch ${url}`);
       const data = (await response.json()) as any;
       results.push(...(data?.results ?? []));
-      // Confluence v1 paginates via _links.next (relative path)
       const next = data?._links?.next;
       url = next ? `${this.baseUrl}/wiki${next}` : null;
     }
     return results;
-  }
-
-  async uploadAttachment(
-    pageId: string,
-    buffer: Buffer,
-    filename: string,
-    mimeType: string = 'image/svg+xml',
-  ): Promise<{ id: string; downloadUrl: string }> {
-    // Confluence v1 API for attachments (v2 doesn't support attachment upload yet)
-    const v1ApiBase = `${this.baseUrl}/wiki/rest/api/content`;
-
-    const boundary = `----FormBoundary${Date.now()}`;
-
-    // Build multipart form data
-    const formDataParts: (string | Buffer)[] = [];
-
-    // Add file field
-    formDataParts.push(`--${boundary}\r\n`);
-    formDataParts.push(`Content-Disposition: form-data; name="file"; filename="${filename}"\r\n`);
-    formDataParts.push(`Content-Type: ${mimeType}\r\n`);
-    formDataParts.push(`\r\n`);
-    formDataParts.push(buffer);
-    formDataParts.push(`\r\n`);
-    formDataParts.push(`--${boundary}--\r\n`);
-
-    // Combine parts into a single buffer
-    const bodyBuffer = Buffer.concat(
-      formDataParts.map(part =>
-        typeof part === 'string' ? Buffer.from(part, 'utf8') : part
-      )
-    );
-
-    const response = await fetch(
-      `${v1ApiBase}/${pageId}/child/attachment`,
-      {
-        method: 'POST',
-        headers: {
-          ...this.headers(),
-          'Content-Type': `multipart/form-data; boundary=${boundary}`,
-          'X-Atlassian-Token': 'nocheck',
-        },
-        body: bodyBuffer,
-      },
-    );
-
-    const responseText = await response.text();
-
-    if (!response.ok) {
-      throw new Error(`Failed to upload attachment to page ${pageId}: ${response.status} ${response.statusText} - ${responseText}`);
-    }
-
-    let data: any;
-    try {
-      data = JSON.parse(responseText);
-    } catch (e) {
-      throw new Error(`Failed to parse attachment response: ${responseText}`);
-    }
-
-    const attachment = data.results?.[0] ?? data;
-    if (!attachment || !attachment.id) {
-      throw new Error(`Invalid attachment response: ${JSON.stringify(data)}`);
-    }
-
-    return {
-      id: attachment.id,
-      downloadUrl: `${this.baseUrl}/wiki${attachment._links?.download ?? ''}`,
-    };
-  }
-
-  private async addLabels(pageId: string, labels: string[]): Promise<void> {
-    const labelPayload = labels.map((name) => ({ prefix: 'global', name }));
-
-    const response = await fetch(`${this.apiBase}/pages/${pageId}/labels`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(labelPayload),
-    });
-
-    // Labels are optional, don't fail if this doesn't work
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      console.error(`Warning: Failed to add labels to page ${pageId}: ${response.status} ${response.statusText} - ${errorText}`);
-    }
-  }
-
-  /**
-   * Resolves either a numeric space ID or a space key (e.g. "ENG") to a numeric space ID.
-   * Confluence v2 APIs expect a numeric spaceId, but many setups use keys, so we support both.
-   */
-  private async resolveSpaceId(spaceIdOrKey: string): Promise<string> {
-    // If it's already numeric, use it directly
-    if (/^[0-9]+$/.test(spaceIdOrKey)) {
-      return spaceIdOrKey;
-    }
-
-    const response = await fetch(
-      `${this.apiBase}/spaces?keys=${encodeURIComponent(spaceIdOrKey)}`,
-      { headers: this.headers() },
-    );
-
-    await this.assertOk(response, `Failed to resolve space "${spaceIdOrKey}"`);
-    const data = (await response.json()) as any;
-    const space = data?.results?.[0];
-
-    if (!space?.id) {
-      throw new Error(
-        `Failed to resolve space "${spaceIdOrKey}" to a numeric ID. ` +
-        `Make sure the space key or ID is correct.`,
-      );
-    }
-
-    return String(space.id);
   }
 
   private headers() {
@@ -320,12 +171,6 @@ export class ConfluenceClient {
     };
   }
 
-  /**
-   * Downloads an attachment image from a Confluence page and returns it as base64.
-   * @param pageId - The page ID the attachment belongs to
-   * @param filename - The attachment filename
-   * @returns Base64-encoded image data and mime type
-   */
   async downloadAttachment(
     pageId: string,
     filename: string,
@@ -340,7 +185,6 @@ export class ConfluenceClient {
       'X-Atlassian-Token': 'no-check',
     };
 
-    // Step 1: Find the attachment via v1 REST API to get its content ID
     const v1Url = `${this.baseUrl}/wiki/rest/api/content/${pageId}/child/attachment?filename=${encodeURIComponent(filename)}&limit=50`;
     const v1Response = await fetch(v1Url, {
       headers: { ...authHeaders, Accept: 'application/json' },
@@ -367,8 +211,6 @@ export class ConfluenceClient {
       throw new Error(`Attachment "${filename}" found but has no ID.`);
     }
 
-    // Step 2: Use the dedicated download endpoint which returns a 302 to a pre-signed CDN URL
-    // GET /wiki/rest/api/content/{pageId}/child/attachment/{attachmentId}/download
     const downloadApiUrl = `${this.baseUrl}/wiki/rest/api/content/${pageId}/child/attachment/${attachmentId}/download`;
 
     const downloadResponse = await fetch(downloadApiUrl, {
@@ -377,7 +219,6 @@ export class ConfluenceClient {
     });
 
     if (downloadResponse.status === 302 || downloadResponse.status === 301 || downloadResponse.status === 303) {
-      // Follow the redirect to the pre-signed CDN URL (no auth needed)
       const cdnUrl = downloadResponse.headers.get('location');
       if (!cdnUrl) {
         throw new Error(`Download endpoint returned redirect but no Location header for "${filename}"`);
@@ -399,7 +240,6 @@ export class ConfluenceClient {
       return { base64: buffer.toString('base64'), mimeType: contentType };
     }
 
-    // If no redirect, maybe the endpoint returned the binary directly
     if (downloadResponse.ok) {
       const contentType = downloadResponse.headers.get('content-type') || 'image/png';
       const buffer = Buffer.from(await downloadResponse.arrayBuffer());
@@ -420,3 +260,20 @@ export class ConfluenceClient {
   }
 }
 
+function buildCql(query: string, spaceKey?: string): string {
+  const trimmed = query.trim();
+  const isCql = /\b(type|space|text|title|label)\s*[=~]/i.test(trimmed);
+  const textClause = isCql ? trimmed : `text ~ "${escapeCql(trimmed)}"`;
+  if (spaceKey) {
+    return `space = "${escapeCql(spaceKey)}" AND (${textClause}) AND type = page`;
+  }
+  return `(${textClause}) AND type = page`;
+}
+
+function escapeCql(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
