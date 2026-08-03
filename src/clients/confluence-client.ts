@@ -1,4 +1,6 @@
 import {
+  AddInlineCommentParams,
+  ConfluenceCommentResult,
   ConfluencePage,
   ConfluenceSearchResult,
   UpdatePageParams,
@@ -118,6 +120,54 @@ export class ConfluenceClient {
     };
   }
 
+  async fetchRenderedPageText(pageId: string): Promise<string> {
+    const response = await fetch(
+      `${this.apiBase}/pages/${pageId}?body-format=view`,
+      { headers: this.headers() },
+    );
+
+    await this.assertOk(response, `Failed to fetch rendered page ${pageId}`);
+    const data = (await response.json()) as any;
+    const view = data?.body?.view?.value;
+    if (typeof view !== 'string') {
+      throw new Error(`Rendered body is unavailable for page ${pageId}`);
+    }
+
+    return htmlToVisibleText(view);
+  }
+
+  async addFooterComment(
+    pageId: string,
+    body: string,
+  ): Promise<ConfluenceCommentResult> {
+    return this.postComment(
+      'footer-comments',
+      {
+        pageId,
+        body: commentBody(body),
+      },
+      `Failed to add footer comment to page ${pageId}`,
+    );
+  }
+
+  async addInlineComment(
+    params: AddInlineCommentParams,
+  ): Promise<ConfluenceCommentResult> {
+    return this.postComment(
+      'inline-comments',
+      {
+        pageId: params.pageId,
+        body: commentBody(params.body),
+        inlineCommentProperties: {
+          textSelection: params.textSelection,
+          textSelectionMatchCount: params.textSelectionMatchCount,
+          textSelectionMatchIndex: params.textSelectionMatchIndex,
+        },
+      },
+      `Failed to add inline comment to page ${params.pageId}`,
+    );
+  }
+
   async fetchPageComments(pageId: string): Promise<{ id: string; author: string; created: string; body: string; replies: { id: string; author: string; created: string; body: string }[] }[]> {
     const v1ApiBase = `${this.baseUrl}/wiki/rest/api/content`;
     const allComments: any[] = await this.fetchAllPaged(
@@ -168,6 +218,25 @@ export class ConfluenceClient {
       Authorization: `Basic ${token}`,
       Accept: 'application/json',
       'Content-Type': 'application/json',
+    };
+  }
+
+  private async postComment(
+    endpoint: 'footer-comments' | 'inline-comments',
+    body: Record<string, unknown>,
+    errorContext: string,
+  ): Promise<ConfluenceCommentResult> {
+    const response = await fetch(`${this.apiBase}/${endpoint}`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+
+    await this.assertOk(response, errorContext);
+    const data = (await response.json()) as any;
+    return {
+      id: data.id,
+      pageId: data.pageId,
     };
   }
 
@@ -276,4 +345,38 @@ function escapeCql(value: string): string {
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function commentBody(value: string): Record<string, string> {
+  return {
+    representation: 'storage',
+    value,
+  };
+}
+
+function htmlToVisibleText(html: string): string {
+  return decodeHtmlEntities(
+    html
+      .replace(/<(br|\/p|\/div|\/li|\/h[1-6])\b[^>]*>/gi, ' ')
+      .replace(/<[^>]+>/g, ''),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function decodeHtmlEntities(value: string): string {
+  const namedEntities: Record<string, string> = {
+    amp: '&',
+    apos: "'",
+    gt: '>',
+    lt: '<',
+    nbsp: ' ',
+    quot: '"',
+  };
+
+  return value.replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (entity, code: string) => {
+    if (code.startsWith('#x')) return String.fromCodePoint(Number.parseInt(code.slice(2), 16));
+    if (code.startsWith('#')) return String.fromCodePoint(Number.parseInt(code.slice(1), 10));
+    return namedEntities[code.toLowerCase()] ?? entity;
+  });
 }

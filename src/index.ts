@@ -9,6 +9,13 @@ import { searchJiraTool, handleSearchJira } from './tools/jira-search.js';
 import { searchConfluenceTool, handleSearchConfluence } from './tools/confluence-search.js';
 import { updateJiraIssueTool, handleUpdateJiraIssue } from './tools/jira-write.js';
 import { updateConfluencePageTool, handleUpdateConfluencePage } from './tools/confluence-write.js';
+import { addJiraCommentTool, handleAddJiraComment } from './tools/jira-comment.js';
+import {
+  addConfluenceCommentTool,
+  addConfluenceInlineCommentTool,
+  handleAddConfluenceComment,
+  handleAddConfluenceInlineComment,
+} from './tools/confluence-comment.js';
 import { JiraClient } from './clients/jira-client.js';
 import { ConfluenceClient } from './clients/confluence-client.js';
 
@@ -47,6 +54,9 @@ async function start() {
       readJiraTicketTool,
       readConfluencePageTool,
       readConfluenceImageTool,
+      addJiraCommentTool,
+      addConfluenceCommentTool,
+      addConfluenceInlineCommentTool,
       updateJiraIssueTool,
       updateConfluencePageTool,
     ];
@@ -59,6 +69,10 @@ async function start() {
       read_jira_ticket: (args) => handleReadJiraTicket(jiraClient, args),
       read_confluence_page: (args) => handleReadConfluencePage(confluenceClient, args),
       read_confluence_image: (args) => handleReadConfluenceImage(confluenceClient, args),
+      add_jira_comment: (args) => handleAddJiraComment(jiraClient, args),
+      add_confluence_comment: (args) => handleAddConfluenceComment(confluenceClient, args),
+      add_confluence_inline_comment: (args) =>
+        handleAddConfluenceInlineComment(confluenceClient, args),
       update_jira_issue: (args) => handleUpdateJiraIssue(jiraClient, args),
       update_confluence_page: (args) => handleUpdateConfluencePage(confluenceClient, args),
     };

@@ -43,6 +43,9 @@ All three environment variables are required. Get your API token from [Atlassian
 | `read_jira_ticket` | Fetch ticket details; optional comments and linked issues |
 | `read_confluence_page` | Fetch page content as markdown; optional comments |
 | `read_confluence_image` | Download an image attachment as base64 |
+| `add_jira_comment` | Add a Jira comment without changing issue fields or status |
+| `add_confluence_comment` | Add a general page comment without changing page content |
+| `add_confluence_inline_comment` | Comment on exact visible text without changing page content |
 | `update_jira_issue` | Add a comment and/or transition issue status |
 | `update_confluence_page` | Replace or append markdown content on a page |
 
@@ -127,6 +130,41 @@ Returns type, priority, labels, reporter, parent/epic, and optionally comments a
 ```json
 { "page_id": "123456", "filename": "image-20260415-222345.png" }
 ```
+
+### add_jira_comment
+
+```json
+{
+  "ticket_key": "PROJ-123",
+  "comment": "Please verify the retry behavior."
+}
+```
+
+This tool only creates a Jira comment. It does not change issue fields or status.
+
+### add_confluence_comment
+
+```json
+{
+  "page_id": "123456",
+  "comment": "**Review complete.** Please address the open question."
+}
+```
+
+Creates a general footer comment. Markdown is converted only for the new comment; the page body and version are not updated.
+
+### add_confluence_inline_comment
+
+```json
+{
+  "page_id": "123456",
+  "comment": "This timeout should be configurable.",
+  "text_selection": "The timeout is thirty seconds.",
+  "match_index": 0
+}
+```
+
+Confluence inline comments anchor to exact visible text, not line numbers. `match_index` is zero-based and defaults to `0`; use it when the selected text occurs more than once. The tool reads the rendered page to validate the selection, then creates only the comment.
 
 ### update_jira_issue
 

@@ -85,6 +85,19 @@ export interface ConfluenceSearchResult {
   url: string;
 }
 
+export interface ConfluenceCommentResult {
+  id: string;
+  pageId?: string;
+}
+
+export interface AddInlineCommentParams {
+  pageId: string;
+  body: string;
+  textSelection: string;
+  textSelectionMatchCount: number;
+  textSelectionMatchIndex: number;
+}
+
 export interface UpdatePageParams {
   title: string;
   body: string;
