@@ -114,12 +114,18 @@ Plain text searches page content. A query containing a CQL condition (`parent =`
 
 The header lists title, page id, space, version, URL, parent id and labels. Storage format is converted to Markdown:
 
-- Tables become Markdown tables (merged cells are repeated in each row they span)
+- Tables become Markdown tables. A merged cell's text appears once, and the cells it covers are left empty
+- A table nested inside a table cell is moved below the outer table as `Table A`, `Table B`, …, and the cell keeps a `(see table A below)` pointer
+- Template placeholder text (such as "Type // to add a target release date") is removed
 - Code blocks keep their language and title
 - Expand macros become `<details>`, and info/note/warning/tip/panel macros become blockquotes starting with the panel label
-- Links to other pages, user mentions, status lozenges, Jira issue macros, dates, task lists and emoticons are kept
+- Links to other pages become `/wiki/spaces/<SPACE>/pages/<id>` URLs; user mentions, status lozenges, Jira issue macros, dates, task lists and emoticons are kept
 - Images link to their attachment download URL with captions
 - Macros with no Markdown equivalent (draw.io, children, include, ...) leave a marker such as `[Confluence macro: drawio "Architecture"]`
+
+With `include_comments`, inline comments are tagged `[inline on "<highlighted text>"]` and their replies `[inline]`; footer comments have no tag.
+
+Short links (`/wiki/x/…`) are not supported. Pass the full page URL or the page id.
 
 ### read_confluence_image
 
