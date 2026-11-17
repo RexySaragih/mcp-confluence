@@ -12,13 +12,19 @@
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "tsc && chmod +x dist/index.js",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "clean:test": "node -e \"require('fs').rmSync('test-dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc && chmod +x dist/index.js",
     "prepublishOnly": "npm run build",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
-    "test": "tsc -p tsconfig.test.json && node --test test-dist/test/**/*.test.js",
-    "test:watch": "tsc -p tsconfig.test.json --watch"
+    "test": "npm run clean:test && tsc -p tsconfig.test.json && node --test test-dist/test/**/*.test.js",
+    "test:watch": "tsc -p tsconfig.test.json --watch",
+    "check:connection": "node --experimental-strip-types src/scripts/test-connections.ts"
   },
   "keywords": [
     "mcp",
@@ -38,6 +44,7 @@
     "url": "https://github.com/RexySaragih/mcp-confluence/issues"
   },
   "dependencies": {
+    "@mixmark-io/domino": "^2.2.0",
     "@modelcontextprotocol/sdk": "1.0.4",
     "marked": "^15.0.6",
     "turndown": "^7.2.2",
@@ -46,7 +53,6 @@
   "devDependencies": {
     "@types/node": "^24.10.2",
     "@types/turndown": "^5.0.6",
-    "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
 }

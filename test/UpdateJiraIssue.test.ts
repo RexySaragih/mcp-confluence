@@ -74,6 +74,25 @@ describe('Update Jira Issue', () => {
     });
   });
 
+  describe('when a comment and an unavailable transition are provided', () => {
+    it('should fail before posting the comment', async () => {
+      let commentPosted = false;
+      mockFetch([
+        route('/issue/ENG-42/comment', () => {
+          commentPosted = true;
+          return jsonResponse({ id: '200' }, 201);
+        }),
+        route('/issue/ENG-42/transitions', () => jsonResponse({ transitions: [{ id: '31', name: 'In Progress' }] })),
+      ]);
+
+      await assert.rejects(
+        () => handleUpdateJiraIssue(new JiraClient(AUTH), { ticket_key: 'ENG-42', comment: 'Done', transition: 'Closed' }),
+        /Transition "Closed" not available for ENG-42/,
+      );
+      assert.equal(commentPosted, false);
+    });
+  });
+
   describe('when the transition is not available', () => {
     it('should return an error listing available transitions', async () => {
       mockFetch([

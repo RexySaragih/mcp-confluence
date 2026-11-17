@@ -1,4 +1,5 @@
-import { config } from 'dotenv';
+// Manual credential check: npm run check:connection (reads .env in the project root if present).
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,82 +9,49 @@ type AuthConfig = {
   apiToken: string;
 };
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-config({ path: path.resolve(__dirname, '../../.env') });
+const PREVIEW_CHARS = 400;
+const envFile = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.env');
+if (existsSync(envFile)) process.loadEnvFile(envFile);
 
-async function main() {
+async function main(): Promise<void> {
   try {
     const auth = loadAuth();
-    await testJira(auth);
-    await testConfluence(auth);
+    console.log(`Site: ${auth.baseUrl}`);
+    console.log(`Email: ${auth.email}`);
+    console.log(`API token: set (${auth.apiToken.length} characters)`);
+    await check('Jira /myself', `${auth.baseUrl}/rest/api/3/myself`, auth);
+    await check('Confluence /spaces', `${auth.baseUrl}/wiki/api/v2/spaces?limit=1`, auth);
     console.log('Connection tests completed.');
-  } catch (error: any) {
-    console.error('Connection test failed:', error?.message ?? error);
-    if (error?.stack) console.error(error.stack);
+  } catch (error) {
+    console.error('Connection test failed:', error instanceof Error ? error.message : error);
     process.exitCode = 1;
   }
 }
 
 function loadAuth(): AuthConfig {
-  const baseUrl = requireEnv('ATLASSIAN_BASE_URL').replace(/\/$/, '');
-  const email = requireEnv('ATLASSIAN_EMAIL');
-  const apiToken = requireEnv('ATLASSIAN_API_TOKEN');
-  console.log({
-    baseUrl,
-    email,
-    apiToken,
-  })
-  return { baseUrl, email, apiToken };
-}
-
-async function testJira(auth: AuthConfig) {
-  const url = `${auth.baseUrl}/rest/api/3/myself`;
-  console.log(`Testing Jira at ${url}`);
-  const response = await fetch(url, { headers: buildHeaders(auth) });
-  await logResponse('Jira /myself', response);
-}
-
-async function testConfluence(auth: AuthConfig) {
-  const url = `${auth.baseUrl}/wiki/api/v2/spaces?limit=1`;
-  console.log(`Testing Confluence at ${url}`);
-  const response = await fetch(url, { headers: buildHeaders(auth) });
-  await logResponse('Confluence /spaces', response);
-}
-
-function buildHeaders(auth: AuthConfig) {
-  const token = Buffer.from(`${auth.email}:${auth.apiToken}`, 'utf8').toString('base64');
   return {
-    Authorization: `Basic ${token}`,
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
+    baseUrl: requireEnv('ATLASSIAN_BASE_URL').replace(/\/+$/, '').replace(/\/wiki$/i, ''),
+    email: requireEnv('ATLASSIAN_EMAIL'),
+    apiToken: requireEnv('ATLASSIAN_API_TOKEN'),
   };
 }
 
-async function logResponse(label: string, response: Response) {
-  const text = await response.text();
-  const preview = text.slice(0, 400);
+async function check(label: string, url: string, auth: AuthConfig): Promise<void> {
+  const token = Buffer.from(`${auth.email}:${auth.apiToken}`, 'utf8').toString('base64');
+  const response = await fetch(url, { headers: { Authorization: `Basic ${token}`, Accept: 'application/json' } });
+  const preview = (await response.text()).slice(0, PREVIEW_CHARS);
   if (response.ok) {
     console.log(`${label} OK (${response.status})`);
-    console.log(prettyJsonSafe(preview));
   } else {
-    console.error(`${label} FAILED (${response.status} ${response.statusText})`);
-    console.error(prettyJsonSafe(preview));
-  }
-}
-
-function prettyJsonSafe(value: string) {
-  try {
-    return JSON.stringify(JSON.parse(value), null, 2);
-  } catch {
-    return value;
+    console.error(`${label} FAILED (${response.status} ${response.statusText})\n${preview}`);
+    process.exitCode = 1;
   }
 }
 
 function requireEnv(name: string): string {
-  const value = process.env[name];
+  const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
 
 void main();
-

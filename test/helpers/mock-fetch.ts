@@ -34,6 +34,24 @@ export function restoreMockFetch(): void {
   }
 }
 
+export interface RecordedRequest {
+  url: string;
+  method: string;
+  body?: unknown;
+}
+
+/** Like mockFetch, but also returns a live log of every request made. */
+export function mockFetchRecording(handlers: FetchHandler[]): RecordedRequest[] {
+  const requests: RecordedRequest[] = [];
+  const recorder: FetchHandler = (url, init) => {
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined;
+    requests.push({ url, method: init?.method ?? 'GET', body });
+    return undefined;
+  };
+  mockFetch([recorder, ...handlers]);
+  return requests;
+}
+
 export function route(
   matcher: string | RegExp,
   responder: (url: string, init?: RequestInit) => Response | Promise<Response>,

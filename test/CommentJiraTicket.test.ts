@@ -48,6 +48,50 @@ describe('Comment Jira Ticket', () => {
     });
   });
 
+  describe('when the comment uses Markdown', () => {
+    it('should send Jira formatting instead of literal Markdown characters', async () => {
+      let requestBody: { body: { content: unknown[] } } | undefined;
+      mockFetch([
+        route('/rest/api/3/issue/ENG-42/comment', (_url, init) => {
+          requestBody = JSON.parse(init?.body as string) as typeof requestBody;
+          return jsonResponse({ id: '202' }, 201);
+        }),
+      ]);
+
+      await handleAddJiraComment(new JiraClient(AUTH), {
+        ticket_key: 'eng-42',
+        comment: 'Fixed **retry**\n\n- step one\n- step two',
+      });
+
+      assert.deepEqual(requestBody?.body.content, [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'Fixed ' }, { type: 'text', text: 'retry', marks: [{ type: 'strong' }] }],
+        },
+        {
+          type: 'bulletList',
+          content: [
+            { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'step one' }] }] },
+            { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'step two' }] }] },
+          ],
+        },
+      ]);
+    });
+  });
+
+  describe('when a board URL with a selected issue is provided', () => {
+    it('should resolve the ticket key from the selectedIssue parameter', async () => {
+      mockFetch([route('/rest/api/3/issue/OPS-8/comment', () => jsonResponse({ id: '203' }, 201))]);
+
+      const result = await handleAddJiraComment(new JiraClient(AUTH), {
+        url: 'https://example.atlassian.net/jira/software/projects/OPS/boards/1?selectedIssue=OPS-8',
+        comment: 'Looking.',
+      });
+
+      assert.match(result.content[0].text, /Comment added to OPS-8/);
+    });
+  });
+
   describe('when a Jira URL is provided', () => {
     it('should resolve the ticket key before adding the comment', async () => {
       mockFetch([

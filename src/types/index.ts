@@ -1,17 +1,3 @@
-export interface JiraUser {
-  displayName?: string;
-}
-
-export interface JiraStatus {
-  name?: string;
-}
-
-export interface JiraSubtask {
-  key: string;
-  summary?: string;
-  status?: JiraStatus;
-}
-
 export interface JiraIssueLink {
   type: string;
   direction: 'outward' | 'inward';
@@ -20,28 +6,38 @@ export interface JiraIssueLink {
   linkedStatus?: string;
 }
 
-export interface JiraComment {
-  id: string;
-  author: string;
-  created: string;
-  body: string;
+export interface JiraSubtask {
+  key: string;
+  summary?: string;
+  status?: string;
 }
 
 export interface JiraIssue {
   key: string;
   summary?: string;
   description?: unknown;
-  status?: JiraStatus;
-  assignee?: JiraUser;
-  reporter?: JiraUser;
-  priority?: { name?: string };
-  issueType?: { name?: string };
-  labels?: string[];
+  status?: string;
+  assignee?: string;
+  reporter?: string;
+  priority?: string;
+  issueType?: string;
+  labels: string[];
   parent?: { key: string; summary?: string };
-  issueLinks?: JiraIssueLink[];
-  subtasks?: JiraSubtask[];
-  comments?: JiraComment[];
-  raw?: Record<string, unknown>;
+  issueLinks: JiraIssueLink[];
+  subtasks: JiraSubtask[];
+}
+
+export interface JiraComment {
+  id: string;
+  author: string;
+  created: string;
+  /** Comment body converted to Markdown. */
+  body: string;
+}
+
+export interface JiraCommentList {
+  comments: JiraComment[];
+  total: number;
 }
 
 export interface JiraSearchResult {
@@ -57,32 +53,78 @@ export interface JiraSearchResult {
 
 export interface JiraSearchPage {
   issues: JiraSearchResult[];
-  maxResults: number;
-  total: number;
   hasMore: boolean;
   nextPageToken: string | null;
 }
 
+export interface JiraTransition {
+  id: string;
+  name: string;
+}
+
+export type PageStatus = 'current' | 'draft';
+
 export interface ConfluencePage {
   id: string;
-  title?: string;
-  url?: string;
+  title: string;
+  status: string;
+  spaceId: string;
+  spaceKey?: string;
+  parentId?: string;
+  parentType?: string;
+  version: number;
+  webUrl: string;
   storage?: string;
-  labels?: string[];
-  children?: {
-    id: string;
-    title?: string;
-    url?: string;
-  }[];
-  raw?: Record<string, unknown>;
+  labels: string[];
+}
+
+export interface ConfluenceSpace {
+  id: string;
+  key: string;
+  name: string;
+  homepageId?: string;
+}
+
+export interface ContentSummary {
+  id: string;
+  title: string;
+  type: string;
+  webUrl?: string;
+}
+
+export interface ChildList {
+  children: ContentSummary[];
+  truncated: boolean;
 }
 
 export interface ConfluenceSearchResult {
   id: string;
+  type: string;
   title: string;
   spaceKey: string;
   excerpt: string;
   url: string;
+}
+
+export interface ConfluenceSearchPage {
+  results: ConfluenceSearchResult[];
+  nextCursor?: string;
+}
+
+export interface ConfluenceComment {
+  id: string;
+  author: string;
+  created: string;
+  /** Rendered (view format) HTML. */
+  bodyHtml: string;
+  /** "inline" or "footer" when Confluence reports it. */
+  location?: string;
+  /** Page text an inline comment is anchored to. */
+  selection?: string;
+}
+
+export interface ConfluenceCommentThread extends ConfluenceComment {
+  replies: ConfluenceComment[];
 }
 
 export interface ConfluenceCommentResult {
@@ -98,14 +140,31 @@ export interface AddInlineCommentParams {
   textSelectionMatchIndex: number;
 }
 
+export interface CreatePageParams {
+  spaceId: string;
+  title: string;
+  parentId?: string;
+  storage: string;
+  status: PageStatus;
+  rootLevel: boolean;
+}
+
 export interface UpdatePageParams {
   title: string;
-  body: string;
+  storage: string;
+  /** The new version number (current version + 1). */
+  version: number;
 }
 
 export interface UpdatePageResult {
   id: string;
   title: string;
-  url: string;
+  webUrl: string;
   version: number;
+}
+
+export interface ImageAttachment {
+  base64: string;
+  mimeType: string;
+  bytes: number;
 }

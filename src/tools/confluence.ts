@@ -1,91 +1,150 @@
 import z from 'zod';
 import { ConfluenceClient } from '../clients/confluence-client.js';
-import { confluenceStorageToMarkdown, ConfluenceContext } from '../parsers/content-parser.js';
+import {
+  collectMentionedAccountIds,
+  collectTitleOnlyPageLinks,
+  confluenceStorageToMarkdown,
+  pageLinkKey,
+  renderedHtmlToMarkdown,
+} from '../parsers/storage-to-markdown.js';
+import { ChildList, ConfluenceComment, ConfluenceCommentThread, ConfluencePage, ContentSummary } from '../types/index.js';
+import { resolvePageId } from '../validators/ids.js';
+import { hasPageTarget, pageTargetFields } from './page-content.js';
+import { formatChildren, formatPath } from './page-hierarchy.js';
+import { defineTool, readOnlyTool, textResult, TextToolResult } from './tool-definition.js';
 
-export const confluenceInputSchema = z
+export const readConfluencePageInputSchema = z
   .object({
-    url: z.string().url().describe('Confluence page URL').optional(),
-    page_id: z.string().describe('Confluence page ID').optional(),
-    include_comments: z.boolean().optional().default(false),
+    ...pageTargetFields,
+    include_comments: z.boolean().optional().default(false).describe('Include page comments and replies'),
+    include_hierarchy: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('Include the ancestor path and the direct child pages'),
   })
-  .refine((val) => !!val.url || !!val.page_id, {
-    message: 'Provide either url or page_id',
-  });
+  .refine(hasPageTarget, { message: 'Provide either url or page_id' });
 
-export const readConfluencePageTool = {
+export const readConfluencePageTool = defineTool({
   name: 'read_confluence_page',
   description:
-    'Fetches Confluence page content and returns markdown. Optionally include page comments.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      url: { type: 'string', description: 'Confluence page URL' },
-      page_id: { type: 'string', description: 'Confluence page ID' },
-      include_comments: { type: 'boolean', description: 'Include page comments (default false)' },
-    },
-  },
-};
+    'Fetches a Confluence page as Markdown with its id, space, version, parent id and labels. Optionally includes comments, and the ancestor path plus direct child pages (include_hierarchy).',
+  schema: readConfluencePageInputSchema,
+  annotations: readOnlyTool('Read Confluence page'),
+});
 
-export async function handleReadConfluencePage(
-  client: ConfluenceClient,
-  args: unknown,
-): Promise<{ content: { type: 'text'; text: string }[] }> {
-  const { url, page_id, include_comments } = confluenceInputSchema.parse(args);
-  const id = page_id ?? extractConfluenceId(url);
-  if (!id) {
-    throw new Error('Unable to resolve page ID from url or page_id');
-  }
+interface Hierarchy {
+  ancestors: ContentSummary[];
+  children: ChildList;
+}
 
-  const page = await client.fetchPage(id);
-  const context: ConfluenceContext = {
+export async function handleReadConfluencePage(client: ConfluenceClient, args: unknown): Promise<TextToolResult> {
+  const input = readConfluencePageInputSchema.parse(args);
+  const pageId = resolvePageId(input, client.getBaseUrl());
+  const page = await client.pages.get(pageId, { body: true, labels: true });
+
+  const [userNames, pageIds, hierarchy, comments] = await Promise.all([
+    lookupUserNames(client, page.storage),
+    lookupLinkedPageIds(client, page.storage, page.spaceKey),
+    input.include_hierarchy ? loadHierarchy(client, pageId) : Promise.resolve(undefined),
+    input.include_comments ? client.comments.listThreads(pageId) : Promise.resolve(undefined),
+  ]);
+  const markdown = confluenceStorageToMarkdown(page.storage, {
     baseUrl: client.getBaseUrl(),
-    pageId: id,
-  };
-  const markdown = confluenceStorageToMarkdown(page.storage, context);
+    pageId,
+    spaceKey: page.spaceKey,
+    userNames,
+    pageIds,
+  });
 
-  const lines = [
-    `Title: ${page.title ?? 'Untitled'}`,
-    page.url ? `URL: ${page.url}` : '',
-    page.labels?.length ? `Labels: ${page.labels.join(', ')}` : '',
-    '',
-    markdown || 'No content available.',
-  ].filter(Boolean);
-
-  if (include_comments) {
-    const comments = await client.fetchPageComments(id);
-    lines.push('', '## Comments');
-    if (comments.length === 0) {
-      lines.push('No comments found on this page.');
-    } else {
-      const commentText = formatComments(comments);
-      lines.push(commentText);
-    }
+  const lines = [...pageHeader(page)];
+  if (hierarchy) {
+    lines.push(`Path: ${formatPath(hierarchy.ancestors, page.title)}`, ...formatChildren(hierarchy.children, client, page.spaceKey));
   }
-
-  return {
-    content: [{ type: 'text', text: lines.join('\n') }],
-  };
+  lines.push('', markdown || 'No content available.');
+  if (comments) lines.push('', '## Comments', formatComments(comments));
+  return textResult(lines.join('\n'));
 }
 
-export function extractConfluenceId(url?: string): string | undefined {
-  if (!url) return undefined;
-  const match = url.match(/\/pages\/([0-9]+)/);
-  if (match?.[1]) return match[1];
-  const uuidMatch = url.match(/pageId=([0-9a-f-]+)/i);
-  return uuidMatch?.[1];
+function pageHeader(page: ConfluencePage): string[] {
+  return [
+    `Title: ${page.title}`,
+    `Page ID: ${page.id}`,
+    ...(page.spaceKey ? [`Space: ${page.spaceKey}`] : []),
+    ...(page.status !== 'current' ? [`Status: ${page.status}`] : []),
+    `Version: ${page.version}`,
+    `URL: ${page.webUrl}`,
+    ...(page.parentId ? [`Parent ID: ${page.parentId}`] : []),
+    ...(page.labels.length ? [`Labels: ${page.labels.join(', ')}`] : []),
+  ];
 }
 
-function formatComments(
-  comments: { author: string; created: string; body: string; replies: { author: string; created: string; body: string }[] }[],
-): string {
-  return comments
-    .map((c, i) => {
-      const body = c.body.replace(/<[^>]+>/g, '').trim();
-      const replyLines = c.replies.map((r, j) => {
-        const rb = r.body.replace(/<[^>]+>/g, '').trim();
-        return `  [reply ${j + 1}] ${r.author} (${r.created})\n  ${rb}`;
-      }).join('\n\n');
-      return `[${i + 1}] ${c.author} (${c.created})\n${body}${replyLines ? '\n\n' + replyLines : ''}`;
+async function loadHierarchy(client: ConfluenceClient, pageId: string): Promise<Hierarchy> {
+  const [ancestors, children] = await Promise.all([client.pages.ancestors(pageId), client.pages.directChildren(pageId)]);
+  return { ancestors, children };
+}
+
+/** Names make mentions readable; a failed lookup only degrades them to account ids. */
+async function lookupUserNames(client: ConfluenceClient, storage: string | undefined): Promise<Map<string, string>> {
+  const accountIds = collectMentionedAccountIds(storage);
+  if (accountIds.length === 0) return new Map();
+  try {
+    return await client.directory.userDisplayNames(accountIds);
+  } catch (error) {
+    console.error('User name lookup failed:', error instanceof Error ? error.message : error);
+    return new Map();
+  }
+}
+
+const MAX_LINK_LOOKUPS = 50;
+
+/**
+ * Links stored by title only are resolved to page ids with one CQL search per
+ * space, so links keep working after a rename. A failed lookup only falls
+ * back to title-based links.
+ */
+async function lookupLinkedPageIds(
+  client: ConfluenceClient,
+  storage: string | undefined,
+  spaceKey: string | undefined,
+): Promise<Map<string, string>> {
+  const ids = new Map<string, string>();
+  const targets = collectTitleOnlyPageLinks(storage, spaceKey).slice(0, MAX_LINK_LOOKUPS);
+  const bySpace = new Map<string, string[]>();
+  for (const target of targets) bySpace.set(target.spaceKey, [...(bySpace.get(target.spaceKey) ?? []), target.title]);
+  try {
+    for (const [space, titles] of bySpace) {
+      const quoted = titles.map((title) => `"${title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(', ');
+      const page = await client.search.search(`space = "${space}" AND type = page AND title in (${quoted})`, {
+        limit: titles.length,
+      });
+      for (const result of page.results) {
+        if (result.id && titles.includes(result.title)) ids.set(pageLinkKey(space, result.title), result.id);
+      }
+    }
+  } catch (error) {
+    console.error('Page link lookup failed:', error instanceof Error ? error.message : error);
+  }
+  return ids;
+}
+
+function commentLabel(comment: ConfluenceComment): string {
+  if (comment.location !== 'inline') return '';
+  return comment.selection ? ` [inline on "${comment.selection.replace(/\s+/g, ' ').trim()}"]` : ' [inline]';
+}
+
+function formatComments(threads: ConfluenceCommentThread[]): string {
+  if (threads.length === 0) return 'No comments found on this page.';
+  return threads
+    .map((thread, index) => {
+      const replies = thread.replies
+        .map((reply, replyIndex) => {
+          const body = renderedHtmlToMarkdown(reply.bodyHtml).replace(/\n/g, '\n  ');
+          return `  [reply ${replyIndex + 1}] ${reply.author} (${reply.created})${commentLabel(reply)}\n  ${body}`;
+        })
+        .join('\n\n');
+      const body = renderedHtmlToMarkdown(thread.bodyHtml);
+      return `[${index + 1}] ${thread.author} (${thread.created})${commentLabel(thread)}\n${body}${replies ? `\n\n${replies}` : ''}`;
     })
     .join('\n\n---\n\n');
 }

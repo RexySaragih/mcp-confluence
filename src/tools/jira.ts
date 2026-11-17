@@ -1,94 +1,82 @@
 import z from 'zod';
 import { JiraClient } from '../clients/jira-client.js';
-import { adfToMarkdown } from '../parsers/content-parser.js';
+import { adfToMarkdown } from '../parsers/adf-to-markdown.js';
+import { JiraCommentList, JiraIssue } from '../types/index.js';
+import { resolveIssueKey } from '../validators/ids.js';
+import { defineTool, readOnlyTool, textResult, TextToolResult } from './tool-definition.js';
 
-export const jiraInputSchema = z
-  .object({
-    url: z.string().url().describe('Jira issue URL').optional(),
-    ticket_key: z.string().describe('Jira issue key, e.g., PROJ-123').optional(),
-    include_comments: z.boolean().optional().default(false),
-    include_links: z.boolean().optional().default(false),
-  })
-  .refine((val) => !!val.url || !!val.ticket_key, {
-    message: 'Provide either url or ticket_key',
-  });
-
-export const readJiraTicketTool = {
-  name: 'read_jira_ticket',
-  description:
-    'Fetches Jira ticket details and returns markdown summary. Optionally include comments and linked issues.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      url: { type: 'string', description: 'Jira issue URL' },
-      ticket_key: { type: 'string', description: 'Jira issue key, e.g., PROJ-123' },
-      include_comments: { type: 'boolean', description: 'Include issue comments (default false)' },
-      include_links: { type: 'boolean', description: 'Include linked issues and parent/epic (default false)' },
-    },
-  },
+export const issueTargetFields = {
+  url: z.string().url().optional().describe('Jira issue URL (…/browse/KEY or a board URL with selectedIssue=KEY)'),
+  ticket_key: z.string().trim().min(1).optional().describe('Jira issue key, e.g. PROJ-123'),
 };
 
-export async function handleReadJiraTicket(
-  client: JiraClient,
-  args: unknown,
-): Promise<{ content: { type: 'text'; text: string }[] }> {
-  const { url, ticket_key, include_comments, include_links } = jiraInputSchema.parse(args);
-  const key = ticket_key ?? extractJiraKey(url);
-  if (!key) {
-    throw new Error('Unable to resolve issue key from url or ticket_key');
-  }
+export const readJiraTicketInputSchema = z
+  .object({
+    ...issueTargetFields,
+    include_comments: z.boolean().optional().default(false).describe('Include issue comments'),
+    include_links: z.boolean().optional().default(false).describe('Include linked issues'),
+  })
+  .refine((input) => !!input.url || !!input.ticket_key, { message: 'Provide either url or ticket_key' });
 
-  const issue = await client.fetchIssue(key, { includeComments: include_comments });
-  const description = adfToMarkdown(issue.description);
-  const subtasks =
-    issue.subtasks?.map((sub) => `- ${sub.key}: ${sub.summary ?? 'Untitled'} (${sub.status?.name ?? 'Unknown'})`) ?? [];
+export const readJiraTicketTool = defineTool({
+  name: 'read_jira_ticket',
+  description:
+    'Fetches a Jira issue and returns its fields and description as Markdown. Optionally includes comments and linked issues.',
+  schema: readJiraTicketInputSchema,
+  annotations: readOnlyTool('Read Jira issue'),
+});
 
-  const lines = [
-    `Key: ${issue.key}`,
-    `Summary: ${issue.summary ?? 'N/A'}`,
-    `Type: ${issue.issueType?.name ?? 'Unknown'}`,
-    `Status: ${issue.status?.name ?? 'Unknown'}`,
-    `Priority: ${issue.priority?.name ?? 'None'}`,
-    `Assignee: ${issue.assignee?.displayName ?? 'Unassigned'}`,
-    `Reporter: ${issue.reporter?.displayName ?? 'Unknown'}`,
-    issue.labels?.length ? `Labels: ${issue.labels.join(', ')}` : 'Labels: None',
-    issue.parent ? `Parent: ${issue.parent.key} — ${issue.parent.summary ?? ''}` : undefined,
-    subtasks.length ? `Subtasks:\n${subtasks.join('\n')}` : 'Subtasks: None',
-    'Description:',
-    description || 'No description provided.',
-  ];
+export async function handleReadJiraTicket(client: JiraClient, args: unknown): Promise<TextToolResult> {
+  const input = readJiraTicketInputSchema.parse(args);
+  const key = resolveIssueKey(input, client.getBaseUrl());
+  const [issue, comments] = await Promise.all([
+    client.getIssue(key),
+    input.include_comments ? client.getComments(key) : Promise.resolve(undefined),
+  ]);
 
-  if (include_links) {
-    if (issue.issueLinks?.length) {
-      const linkLines = issue.issueLinks.map((link) => {
-        const dir = link.direction === 'outward' ? '→' : '←';
-        return `- ${dir} ${link.type}: ${link.linkedKey} — ${link.linkedSummary ?? ''} (${link.linkedStatus ?? 'Unknown'})`;
-      });
-      lines.push('', 'Linked Issues:', ...linkLines);
-    } else {
-      lines.push('', 'Linked Issues: None');
-    }
-  }
-
-  if (include_comments) {
-    if (issue.comments?.length) {
-      const commentLines = issue.comments.map((c, i) => {
-        const body = c.body || '(empty)';
-        return `[${i + 1}] ${c.author} (${c.created})\n${body}`;
-      });
-      lines.push('', 'Comments:', ...commentLines);
-    } else {
-      lines.push('', 'Comments: None');
-    }
-  }
-
-  return {
-    content: [{ type: 'text', text: lines.filter((line) => line !== undefined).join('\n') }],
-  };
+  const lines = [...issueSummaryLines(issue), 'Description:', adfToMarkdown(issue.description) || 'No description provided.'];
+  if (input.include_links) lines.push('', ...linkLines(issue));
+  if (comments) lines.push('', ...commentLines(comments));
+  return textResult(lines.join('\n'));
 }
 
-export function extractJiraKey(url?: string): string | undefined {
-  if (!url) return undefined;
-  const match = url.match(/browse\/([A-Z0-9_-]+)/i);
-  return match?.[1];
+function issueSummaryLines(issue: JiraIssue): string[] {
+  const subtasks = issue.subtasks.map(
+    (subtask) => `- ${subtask.key}: ${subtask.summary ?? 'Untitled'} (${subtask.status ?? 'Unknown'})`,
+  );
+  return [
+    `Key: ${issue.key}`,
+    `Summary: ${issue.summary ?? 'N/A'}`,
+    `Type: ${issue.issueType ?? 'Unknown'}`,
+    `Status: ${issue.status ?? 'Unknown'}`,
+    `Priority: ${issue.priority ?? 'None'}`,
+    `Assignee: ${issue.assignee ?? 'Unassigned'}`,
+    `Reporter: ${issue.reporter ?? 'Unknown'}`,
+    `Labels: ${issue.labels.length ? issue.labels.join(', ') : 'None'}`,
+    ...(issue.parent ? [`Parent: ${issue.parent.key} — ${issue.parent.summary ?? ''}`] : []),
+    subtasks.length ? `Subtasks:\n${subtasks.join('\n')}` : 'Subtasks: None',
+  ];
+}
+
+function linkLines(issue: JiraIssue): string[] {
+  if (!issue.issueLinks.length) return ['Linked Issues: None'];
+  return [
+    'Linked Issues:',
+    ...issue.issueLinks.map((link) => {
+      const arrow = link.direction === 'outward' ? '→' : '←';
+      return `- ${arrow} ${link.type}: ${link.linkedKey} — ${link.linkedSummary ?? ''} (${link.linkedStatus ?? 'Unknown'})`;
+    }),
+  ];
+}
+
+function commentLines(list: JiraCommentList): string[] {
+  if (!list.comments.length) return ['Comments: None'];
+  const lines = [
+    'Comments:',
+    ...list.comments.map((comment, index) => `[${index + 1}] ${comment.author} (${comment.created})\n${comment.body || '(empty)'}`),
+  ];
+  if (list.total > list.comments.length) {
+    lines.push(`(Showing ${list.comments.length} of ${list.total} comments.)`);
+  }
+  return lines;
 }

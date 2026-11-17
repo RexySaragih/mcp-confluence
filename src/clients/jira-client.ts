@@ -1,259 +1,199 @@
+import { adfToMarkdown } from '../parsers/adf-to-markdown.js';
+import { markdownToAdf } from '../parsers/markdown-to-adf.js';
 import {
   JiraComment,
+  JiraCommentList,
   JiraIssue,
   JiraIssueLink,
   JiraSearchPage,
+  JiraTransition,
 } from '../types/index.js';
+import { AtlassianAuth, AtlassianHttp, buildQuery } from './atlassian-http.js';
 
-export interface JiraClientConfig {
-  baseUrl: string;
-  email: string;
-  apiToken: string;
-}
+export type JiraClientConfig = AtlassianAuth;
 
 const ISSUE_FIELDS = [
-  'summary',
-  'description',
-  'status',
-  'assignee',
-  'reporter',
-  'priority',
-  'issuetype',
-  'labels',
-  'parent',
-  'subtasks',
-  'issuelinks',
-  'comment',
+  'summary', 'description', 'status', 'assignee', 'reporter', 'priority', 'issuetype', 'labels', 'parent', 'subtasks', 'issuelinks',
 ].join(',');
-
 const SEARCH_FIELDS = ['summary', 'status', 'assignee', 'issuetype', 'priority', 'updated'];
+const COMMENT_PAGE_SIZE = 100;
+export const MAX_ISSUE_COMMENTS = 500;
+
+interface RawNamed {
+  name?: string;
+  displayName?: string;
+}
+
+interface RawIssueRef {
+  key: string;
+  fields?: { summary?: string; status?: RawNamed };
+}
+
+interface RawIssueLink {
+  type?: { name?: string; outward?: string };
+  outwardIssue?: RawIssueRef;
+  inwardIssue?: RawIssueRef;
+}
+
+interface RawIssue {
+  key: string;
+  fields?: {
+    summary?: string;
+    description?: unknown;
+    status?: RawNamed;
+    assignee?: RawNamed | null;
+    reporter?: RawNamed | null;
+    priority?: RawNamed | null;
+    issuetype?: RawNamed;
+    labels?: string[];
+    parent?: RawIssueRef;
+    subtasks?: RawIssueRef[];
+    issuelinks?: RawIssueLink[];
+    updated?: string;
+  };
+}
+
+interface RawComment {
+  id: string;
+  author?: RawNamed;
+  created?: string;
+  body?: unknown;
+}
 
 export class JiraClient {
-  private readonly apiBase: string;
-  private readonly baseUrl: string;
+  private readonly http: AtlassianHttp;
 
-  constructor(private readonly config: JiraClientConfig) {
-    if (!config.baseUrl) throw new Error('ATLASSIAN_BASE_URL is required');
-    if (!config.email) throw new Error('ATLASSIAN_EMAIL is required');
-    if (!config.apiToken) throw new Error('ATLASSIAN_API_TOKEN is required');
-    this.baseUrl = config.baseUrl.replace(/\/$/, '');
-    this.apiBase = `${this.baseUrl}/rest/api/3`;
+  constructor(config: JiraClientConfig) {
+    this.http = new AtlassianHttp(config);
   }
 
   getBaseUrl(): string {
-    return this.baseUrl;
+    return this.http.baseUrl;
   }
 
-  async fetchIssue(issueKey: string, options?: { includeComments?: boolean }): Promise<JiraIssue> {
-    const response = await fetch(
-      `${this.apiBase}/issue/${issueKey}?fields=${ISSUE_FIELDS}`,
-      { headers: this.headers() },
-    );
-
-    await this.assertOk(response, `Failed to fetch issue ${issueKey}`);
-    const data = (await response.json()) as any;
-
-    const issue: JiraIssue = {
-      key: data?.key,
-      summary: data?.fields?.summary,
-      description: data?.fields?.description,
-      status: data?.fields?.status,
-      assignee: data?.fields?.assignee,
-      reporter: data?.fields?.reporter,
-      priority: data?.fields?.priority,
-      issueType: data?.fields?.issuetype,
-      labels: data?.fields?.labels ?? [],
-      parent: data?.fields?.parent
-        ? { key: data.fields.parent.key, summary: data.fields.parent.fields?.summary }
-        : undefined,
-      issueLinks: mapIssueLinks(data?.fields?.issuelinks),
-      subtasks:
-        data?.fields?.subtasks?.map((subtask: any) => ({
-          key: subtask?.key,
-          summary: subtask?.fields?.summary,
-          status: subtask?.fields?.status,
-        })) ?? [],
-      raw: data,
-    };
-
-    if (options?.includeComments) {
-      issue.comments = await this.fetchComments(issueKey);
-    }
-
-    return issue;
-  }
-
-  async searchIssues(
-    jql: string,
-    options: { maxResults: number; nextPageToken?: string },
-  ): Promise<JiraSearchPage> {
-    const body: Record<string, unknown> = {
-      jql,
-      maxResults: options.maxResults,
-      fields: SEARCH_FIELDS,
-    };
-
-    if (options.nextPageToken) {
-      body.nextPageToken = options.nextPageToken;
-    }
-
-    const response = await fetch(`${this.apiBase}/search/jql`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(body),
+  async getIssue(issueKey: string): Promise<JiraIssue> {
+    const raw = await this.http.json<RawIssue>(`${issuePath(issueKey)}?fields=${ISSUE_FIELDS}`, {
+      errorContext: `Failed to fetch issue ${issueKey}`,
     });
-
-    await this.assertOk(response, 'Failed to search Jira issues');
-    const data = (await response.json()) as any;
-
-    const issues = (data?.issues ?? []).map((issue: any) => ({
-      key: issue.key,
-      summary: issue.fields?.summary ?? '',
-      status: issue.fields?.status?.name ?? 'Unknown',
-      assignee: issue.fields?.assignee?.displayName ?? 'Unassigned',
-      issueType: issue.fields?.issuetype?.name ?? 'Unknown',
-      priority: issue.fields?.priority?.name ?? 'None',
-      updated: issue.fields?.updated ?? '',
-      url: `${this.baseUrl}/browse/${issue.key}`,
-    }));
-
-    const nextPageToken = data?.nextPageToken ?? null;
-
+    const fields = raw.fields ?? {};
     return {
-      issues,
-      maxResults: options.maxResults,
-      total: data?.total ?? issues.length,
-      hasMore: Boolean(nextPageToken),
+      key: raw.key,
+      summary: fields.summary,
+      description: fields.description,
+      status: fields.status?.name,
+      assignee: fields.assignee?.displayName,
+      reporter: fields.reporter?.displayName,
+      priority: fields.priority?.name,
+      issueType: fields.issuetype?.name,
+      labels: fields.labels ?? [],
+      parent: fields.parent ? { key: fields.parent.key, summary: fields.parent.fields?.summary } : undefined,
+      issueLinks: mapIssueLinks(fields.issuelinks),
+      subtasks: (fields.subtasks ?? []).map((subtask) => ({
+        key: subtask.key,
+        summary: subtask.fields?.summary,
+        status: subtask.fields?.status?.name,
+      })),
+    };
+  }
+
+  async getComments(issueKey: string, max = MAX_ISSUE_COMMENTS): Promise<JiraCommentList> {
+    const comments: JiraComment[] = [];
+    let total = 0;
+    for (let startAt = 0; comments.length < max; ) {
+      const query = buildQuery({ startAt, maxResults: COMMENT_PAGE_SIZE, orderBy: 'created' });
+      const raw = await this.http.json<{ comments?: RawComment[]; total?: number }>(
+        `${issuePath(issueKey)}/comment?${query}`,
+        { errorContext: `Failed to fetch comments for ${issueKey}` },
+      );
+      const page = raw.comments ?? [];
+      total = raw.total ?? comments.length + page.length;
+      comments.push(...page.map(toComment));
+      startAt += page.length;
+      if (page.length === 0 || startAt >= total) break;
+    }
+    return { comments: comments.slice(0, max), total };
+  }
+
+  async searchIssues(jql: string, options: { maxResults: number; nextPageToken?: string }): Promise<JiraSearchPage> {
+    const body: Record<string, unknown> = { jql, maxResults: options.maxResults, fields: SEARCH_FIELDS };
+    if (options.nextPageToken) body.nextPageToken = options.nextPageToken;
+
+    const raw = await this.http.json<{ issues?: RawIssue[]; nextPageToken?: string }>('/rest/api/3/search/jql', {
+      method: 'POST',
+      body,
+      errorContext: 'Failed to search Jira issues',
+    });
+    const nextPageToken = raw.nextPageToken ?? null;
+    return {
+      issues: (raw.issues ?? []).map((issue) => ({
+        key: issue.key,
+        summary: issue.fields?.summary ?? '',
+        status: issue.fields?.status?.name ?? 'Unknown',
+        assignee: issue.fields?.assignee?.displayName ?? 'Unassigned',
+        issueType: issue.fields?.issuetype?.name ?? 'Unknown',
+        priority: issue.fields?.priority?.name ?? 'None',
+        updated: issue.fields?.updated ?? '',
+        url: `${this.http.baseUrl}/browse/${issue.key}`,
+      })),
+      hasMore: nextPageToken !== null,
       nextPageToken,
     };
   }
 
-  async fetchComments(issueKey: string): Promise<JiraComment[]> {
-    const response = await fetch(`${this.apiBase}/issue/${issueKey}/comment`, {
-      headers: this.headers(),
-    });
-
-    await this.assertOk(response, `Failed to fetch comments for ${issueKey}`);
-    const data = (await response.json()) as any;
-
-    return (data?.comments ?? []).map((comment: any) => ({
-      id: comment.id,
-      author: comment.author?.displayName ?? 'Unknown',
-      created: comment.created ?? '',
-      body: extractCommentBody(comment.body),
-    }));
-  }
-
-  async addComment(issueKey: string, body: string): Promise<void> {
-    const response = await fetch(`${this.apiBase}/issue/${issueKey}/comment`, {
+  /** Adds a comment written in Markdown, converted to Atlassian Document Format. */
+  async addComment(issueKey: string, markdown: string): Promise<void> {
+    await this.http.send(`${issuePath(issueKey)}/comment`, {
       method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        body: {
-          type: 'doc',
-          version: 1,
-          content: [
-            {
-              type: 'paragraph',
-              content: [{ type: 'text', text: body }],
-            },
-          ],
-        },
-      }),
+      body: { body: markdownToAdf(markdown) },
+      errorContext: `Failed to add comment to ${issueKey}`,
     });
-
-    await this.assertOk(response, `Failed to add comment to ${issueKey}`);
   }
 
-  async getTransitions(issueKey: string): Promise<{ id: string; name: string }[]> {
-    const response = await fetch(`${this.apiBase}/issue/${issueKey}/transitions`, {
-      headers: this.headers(),
+  async getTransitions(issueKey: string): Promise<JiraTransition[]> {
+    const raw = await this.http.json<{ transitions?: JiraTransition[] }>(`${issuePath(issueKey)}/transitions`, {
+      errorContext: `Failed to fetch transitions for ${issueKey}`,
     });
-
-    await this.assertOk(response, `Failed to fetch transitions for ${issueKey}`);
-    const data = (await response.json()) as any;
-
-    return (data?.transitions ?? []).map((t: any) => ({
-      id: t.id,
-      name: t.name,
-    }));
+    return (raw.transitions ?? []).map((transition) => ({ id: transition.id, name: transition.name }));
   }
 
   async transitionIssue(issueKey: string, transitionId: string): Promise<void> {
-    const response = await fetch(`${this.apiBase}/issue/${issueKey}/transitions`, {
+    await this.http.send(`${issuePath(issueKey)}/transitions`, {
       method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({ transition: { id: transitionId } }),
+      body: { transition: { id: transitionId } },
+      errorContext: `Failed to transition ${issueKey}`,
     });
-
-    await this.assertOk(response, `Failed to transition ${issueKey}`);
-  }
-
-  private headers() {
-    const token = Buffer.from(
-      `${this.config.email}:${this.config.apiToken}`,
-      'utf8',
-    ).toString('base64');
-    return {
-      Authorization: `Basic ${token}`,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    };
-  }
-
-  private async assertOk(response: Response, context: string) {
-    if (response.ok) return;
-    const body = await response.text().catch(() => '');
-    throw new Error(`${context}: ${response.status} ${response.statusText} ${body}`);
   }
 }
 
-function mapIssueLinks(issueLinks: any[] | undefined): JiraIssueLink[] {
-  if (!issueLinks?.length) return [];
+function issuePath(issueKey: string): string {
+  return `/rest/api/3/issue/${encodeURIComponent(issueKey)}`;
+}
 
-  return issueLinks.flatMap((link) => {
-    const typeName = link.type?.name ?? link.type?.outward ?? 'Related';
+function toComment(raw: RawComment): JiraComment {
+  return {
+    id: raw.id,
+    author: raw.author?.displayName ?? 'Unknown',
+    created: raw.created ?? '',
+    body: adfToMarkdown(raw.body),
+  };
+}
+
+function mapIssueLinks(issueLinks: RawIssueLink[] | undefined): JiraIssueLink[] {
+  return (issueLinks ?? []).flatMap((link) => {
+    const type = link.type?.name ?? link.type?.outward ?? 'Related';
     const results: JiraIssueLink[] = [];
-
-    if (link.outwardIssue) {
-      results.push({
-        type: typeName,
-        direction: 'outward',
-        linkedKey: link.outwardIssue.key,
-        linkedSummary: link.outwardIssue.fields?.summary,
-        linkedStatus: link.outwardIssue.fields?.status?.name,
-      });
-    }
-
-    if (link.inwardIssue) {
-      results.push({
-        type: typeName,
-        direction: 'inward',
-        linkedKey: link.inwardIssue.key,
-        linkedSummary: link.inwardIssue.fields?.summary,
-        linkedStatus: link.inwardIssue.fields?.status?.name,
-      });
-    }
-
+    if (link.outwardIssue) results.push(toLink(type, 'outward', link.outwardIssue));
+    if (link.inwardIssue) results.push(toLink(type, 'inward', link.inwardIssue));
     return results;
   });
 }
 
-function extractCommentBody(body: unknown): string {
-  if (typeof body === 'string') return body;
-  if (!body || typeof body !== 'object') return '';
-
-  const doc = body as { content?: { type?: string; text?: string; content?: unknown[] }[] };
-  return (doc.content ?? [])
-    .flatMap((block) => extractAdfText(block))
-    .join('\n')
-    .trim();
-}
-
-function extractAdfText(node: { type?: string; text?: string; content?: unknown[] }): string[] {
-  if (node.type === 'text' && node.text) return [node.text];
-  if (!node.content?.length) return [];
-  return node.content.flatMap((child) =>
-    extractAdfText(child as { type?: string; text?: string; content?: unknown[] }),
-  );
+function toLink(type: string, direction: JiraIssueLink['direction'], issue: RawIssueRef): JiraIssueLink {
+  return {
+    type,
+    direction,
+    linkedKey: issue.key,
+    linkedSummary: issue.fields?.summary,
+    linkedStatus: issue.fields?.status?.name,
+  };
 }
